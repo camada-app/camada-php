@@ -1,0 +1,49 @@
+{
+    "name": "camada/camada",
+    "description": "camada SDK for PHP: inline enforcement of your snapshot (ordered custom rules, then allow, block, challenge), first-party beacon and proof-of-work challenge, batched event shipping. Works with $_SERVER + php://input + header() alone; Laravel middleware included.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "camada",
+        "bot",
+        "security",
+        "middleware",
+        "laravel"
+    ],
+    "require": {
+        "php": ">=8.1",
+        "ext-json": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5 || ^11 || ^12",
+        "phpstan/phpstan": "^2",
+        "friendsofphp/php-cs-fixer": "^3.64",
+        "illuminate/http": "^10 || ^11 || ^12"
+    },
+    "autoload": {
+        "psr-4": {
+            "Camada\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Camada\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "lint": "phpstan analyse --level 8 --memory-limit 512M src tests",
+        "fmt": "php-cs-fixer fix --dry-run --diff",
+        "fmt-fix": "php-cs-fixer fix",
+        "test": "phpunit",
+        "check": [
+            "@lint",
+            "@fmt",
+            "@test"
+        ]
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": false
+    },
+    "minimum-stability": "stable"
+}
