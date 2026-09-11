@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Camada\Tests;
 
+use Camada\Events\Builder;
+use Camada\Req;
 use Camada\Snapshot\FileWords;
 use Camada\Snapshot\Matcher;
 use Camada\Snapshot\MatchInput;
@@ -285,5 +287,22 @@ final class ConformanceTest extends TestCase
             self::assertSame($mem->get($i), $file->get($i), "word {$i}");
         }
         self::assertSame($mem->range(2, 30), $file->range(2, 30));
+    }
+
+    public function testHdrsPinsTheExactHeaderOrder(): void
+    {
+        self::assertSame(Fixtures::json('blk3/hdrs.json')['hdrs'], Builder::HDRS);
+    }
+
+    public function testHdrsHmVectors(): void
+    {
+        /** @var list<array{names: list<string>, hm: int}> $cases */
+        $cases = Fixtures::json('blk3/hdrs.json')['cases'];
+        self::assertNotSame([], $cases);
+        foreach ($cases as $c) {
+            $headers = array_map(static fn (string $n): array => [$n, 'v'], $c['names']);
+            $ev = Builder::wireEvent(new Req(method: 'GET', path: '/', host: 'x.test', headers: $headers), ip: '1.2.3.4', tap: 'sdk-node', rid: 'r');
+            self::assertSame($c['hm'], $ev['hm'], implode('+', $c['names']));
+        }
     }
 }
