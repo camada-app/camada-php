@@ -86,28 +86,42 @@ final class PhpServer
     }
 
     /**
+     * A raw HTTP/1.1 client that stops reading at Content-Length: PHP's own http:// wrapper reads
+     * until the server closes, which under php -S is only when the script — post-response phase
+     * included — has ended, so it could never show that the response ended first.
+     *
      * @param array<string, string> $headers
      * @return array{status: int, headers: array<string, list<string>>, body: string, ms: float}
+     * @phpstan-impure
      */
     public function request(string $method, string $path, array $headers = [], ?string $body = null): array
     {
-        $h = '';
-        foreach ($headers as $k => $v) {
-            $h .= "{$k}: {$v}\r\n";
-        }
-        $ctx = stream_context_create(['http' => [
-            'method' => $method, 'header' => $h, 'content' => $body ?? '', 'ignore_errors' => true, 'timeout' => 10, 'follow_location' => 0,
-        ]]);
         $t0 = microtime(true);
-        $out = @file_get_contents($this->url . $path, false, $ctx);
-        $ms = (microtime(true) - $t0) * 1000;
-        Assert::assertIsString($out, "no answer from php -S for {$method} {$path}\n" . $this->output());
-        $raw = function_exists('http_get_last_response_headers') ? http_get_last_response_headers() : get_defined_vars()['http_response_header'];
-        Assert::assertIsArray($raw);
-        /** @var list<string> $raw */
+        $sock = @stream_socket_client("tcp://127.0.0.1:{$this->port}", $errno, $errstr, 10);
+        Assert::assertIsResource($sock, "no connection to php -S for {$method} {$path}: {$errstr}\n" . $this->output());
+        stream_set_timeout($sock, 10);
+        $head = "{$method} {$path} HTTP/1.1\r\nHost: 127.0.0.1:{$this->port}\r\nConnection: close\r\n";
+        foreach ($headers as $k => $v) {
+            $head .= "{$k}: {$v}\r\n";
+        }
+        if ($body !== null) {
+            $head .= 'Content-Length: ' . strlen($body) . "\r\n";
+        }
+        fwrite($sock, $head . "\r\n" . ($body ?? ''));
+        $raw = '';
+        while (!str_contains($raw, "\r\n\r\n")) {
+            $chunk = fread($sock, 8192);
+            if ($chunk === false || $chunk === '') {
+                break;
+            }
+            $raw .= $chunk;
+        }
+        $split = strpos($raw, "\r\n\r\n");
+        Assert::assertIsInt($split, "no answer from php -S for {$method} {$path}\n" . $this->output());
+        $out = substr($raw, $split + 4);
         $status = 0;
         $parsed = [];
-        foreach ($raw as $line) {
+        foreach (explode("\r\n", substr($raw, 0, $split)) as $line) {
             if (preg_match('~^HTTP/\S+ (\d{3})~', $line, $m) === 1) {
                 $status = (int) $m[1];
                 continue;
@@ -117,6 +131,19 @@ final class PhpServer
                 $parsed[strtolower(substr($line, 0, $colon))][] = trim(substr($line, $colon + 1));
             }
         }
+        $length = isset($parsed['content-length'][0]) ? (int) $parsed['content-length'][0] : null;
+        while ($length === null || strlen($out) < $length) {
+            $chunk = fread($sock, 65536);
+            if ($chunk === false || $chunk === '') {
+                break;
+            }
+            $out .= $chunk;
+        }
+        fclose($sock);
+        if ($length !== null) {
+            $out = substr($out, 0, $length);
+        }
+        $ms = (microtime(true) - $t0) * 1000;
         return ['status' => $status, 'headers' => $parsed, 'body' => $out, 'ms' => $ms];
     }
 
@@ -124,7 +151,12 @@ final class PhpServer
     {
         $status = proc_get_status($this->proc);
         if ($status['running']) {
-            // the CLI server forks workers: end the whole group, not just the parent
+            // the CLI server forks its workers and they outlive a terminated master: end them first
+            foreach (explode("\n", trim((string) shell_exec("pgrep -P {$status['pid']}"))) as $child) {
+                if ($child !== '') {
+                    posix_kill((int) $child, SIGKILL);
+                }
+            }
             posix_kill(-$status['pid'], SIGTERM);
             proc_terminate($this->proc, SIGTERM);
         }
