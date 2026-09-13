@@ -14,6 +14,10 @@ use Camada\Guarded;
  * the SAPI's own) so the client can stop reading. Then, in this order: (1) FINISH — the request's event is appended to the spool;
  * (2) SHIP — a due spool is POSTed; (3) REFRESH — a stale snapshot is polled. Each slot is armed
  * at most once per request (the first arm wins) and runs inside the fail-open envelope.
+ *
+ * A buffer PHP will not let userland end — zlib.output_compression's handler once it has started
+ * compressing — is never ended (each try would fail with a notice, forever): what is above it is
+ * drained into it, it is flushed, and the response ends with the script, after the deferred work.
  */
 final class Deferred
 {
@@ -59,6 +63,18 @@ final class Deferred
         return $this->installed;
     }
 
+    /** The SAPI's own finisher — fastcgi_finish_request (FPM, FrankenPHP), litespeed_finish_request (LiteSpeed) — or null under `php -S` and mod_php. */
+    public static function nativeFinisher(): ?\Closure
+    {
+        if (function_exists('fastcgi_finish_request')) {
+            return fastcgi_finish_request(...);
+        }
+        if (function_exists('litespeed_finish_request')) {
+            return litespeed_finish_request(...);
+        }
+        return null;
+    }
+
     /** The shutdown function: end the response, then the deferred work. */
     public function run(): void
     {
@@ -94,30 +110,37 @@ final class Deferred
     public static function finishResponse(int $obLevel): void
     {
         self::fatalIs500();
-        if (function_exists('fastcgi_finish_request')) {
-            fastcgi_finish_request();
-            return;
-        }
-        if (function_exists('litespeed_finish_request')) {
-            litespeed_finish_request();
+        $native = self::nativeFinisher();
+        if ($native !== null) {
+            $native();
             return;
         }
         // The fallback (php -S, mod_php): end EVERY output buffer — the adapter's and the SAPI's own
         // (output_buffering=4096 under the CLI server, which flush() never drains) — with a
         // Content-Length stamped first, so the client can stop reading before the deferred work runs.
+        // The stamp is only right over a buffer that passes bytes through unchanged (the default
+        // handler); one that rewrites them (zlib) gets none.
         if ($obLevel > 0 && ob_get_level() >= $obLevel) {
-            while (ob_get_level() > 1) {
-                ob_end_flush();
+            while (ob_get_level() > 1 && self::endable() && ob_end_flush()) {
             }
-            if (!headers_sent() && self::wantsLength()) {
+            if (ob_get_level() === 1 && (ob_get_status()['name'] ?? '') === 'default output handler' && !headers_sent() && self::wantsLength()) {
                 header('Content-Length: ' . (int) ob_get_length());
             }
         }
-        while (ob_get_level() > 0) {
-            ob_end_flush();
+        while (ob_get_level() > 0 && self::endable() && ob_end_flush()) {
+        }
+        if (ob_get_level() > 0) {
+            ob_flush();   // a buffer that cannot be ended: hand it what we have, the script's end sends the rest
         }
         flush();
         ignore_user_abort(true);
+    }
+
+    /** Whether userland may end the innermost output buffer (zlib.output_compression's handler refuses once it compresses). */
+    private static function endable(): bool
+    {
+        $top = ob_get_status();
+        return $top !== [] && ((int) ($top['flags'] ?? 0) & PHP_OUTPUT_HANDLER_REMOVABLE) !== 0;
     }
 
     /**

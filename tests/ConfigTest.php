@@ -40,22 +40,23 @@ final class ConfigTest extends TestCase
         self::assertSame('tok.snap', $e->secret);
         self::assertSame(Env::DEFAULT_INGEST_URL, $e->ingestUrl);
         self::assertSame(Env::DEFAULT_INGEST_URL . '/snapshot', $e->snapshotUrl);
-        self::assertFalse($e->serverless);
         self::assertNull($e->trustedProxy);
+        self::assertNull($e->cacheDir);
     }
 
     public function testEnvAcceptsTheSplitTokensAndTheOverrides(): void
     {
         $e = Env::resolve([
             'CAMADA_TOKEN' => 'tok', 'CAMADA_SNAPSHOT_TOKEN' => 'snap', 'CAMADA_INGEST_URL' => 'http://localhost:8787/',
-            'CAMADA_SNAPSHOT_URL' => 'http://other/snap', 'CAMADA_SERVERLESS' => '1', 'CAMADA_TRUSTED_PROXY' => 'hops:1',
+            'CAMADA_SNAPSHOT_URL' => 'http://other/snap', 'CAMADA_TRUSTED_PROXY' => 'hops:1', 'CAMADA_CACHE_DIR' => '/var/cache/camada',
         ]);
         self::assertNotNull($e);
         self::assertSame('http://localhost:8787', $e->ingestUrl);
         self::assertSame('http://other/snap', $e->snapshotUrl);
         self::assertSame('tok.snap', $e->secret);
-        self::assertTrue($e->serverless);
         self::assertSame(['mode' => 'hops', 'hops' => 1], $e->trustedProxy);
+        self::assertSame('/var/cache/camada', $e->cacheDir);
+        self::assertNull(Env::resolve(['CAMADA_KEY' => 'a.b', 'CAMADA_CACHE_DIR' => ''])?->cacheDir);   // empty is unset
         self::assertSame('http://localhost:8787/snapshot', Env::resolve(['CAMADA_KEY' => 'a.b', 'CAMADA_INGEST_URL' => 'http://localhost:8787'])?->snapshotUrl);
     }
 

@@ -62,7 +62,7 @@ class Camada
         public readonly string $challengePath = Constants::CHALLENGE_PATH,
         int $snapshotVersion = Constants::DEFAULT_SNAPSHOT_VERSION,
     ) {
-        $source = $env ?? self::processEnv();
+        $source = $env ?? array_merge($_ENV, getenv());
         $this->challengeOn = $challenge && ($source['CAMADA_CHALLENGE'] ?? null) !== '0';
         $this->killed = ($source[Constants::KILL_SWITCH_ENV] ?? null) === '1';
         $this->env = Env::resolve($source);
@@ -73,20 +73,12 @@ class Camada
             $this->kit = null;
             return;
         }
-        $dirOverride = $source['CAMADA_CACHE_DIR'] ?? null;
-        $cache = new Cache(Cache::defaultDir($this->env->snapToken, is_string($dirOverride) ? $dirOverride : null));
+        $cache = new Cache(Cache::defaultDir($this->env->snapToken, $this->env->cacheDir));
         Guarded::useStamp($cache->path('log.stamp'));   // one log line a minute across every worker, not per process
         $transport ??= new StreamTransport();
         $this->snap = new Client($this->env->snapshotUrl, $this->env->snapToken, $cache, $transport, sdk: Version::SDK_ID, snapshotVersion: $snapshotVersion, refreshS: $refreshS);
         $this->spool = new Spool($cache, $transport, $this->env->ingestUrl, $this->env->ingestToken, sdk: Version::SDK_ID);
         $this->kit = new Kit($this->env->secret);
-    }
-
-    /** @return array<string, mixed> */
-    private static function processEnv(): array
-    {
-        $env = getenv();
-        return array_merge($_ENV, $env);
     }
 
     // ---- the default engine ----

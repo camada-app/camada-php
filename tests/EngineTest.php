@@ -122,10 +122,18 @@ final class EngineTest extends TestCase
     {
         $this->a->snapshotDown = true;
         $h = $this->host(load: false);
-        self::assertSame(200, $h(new Call('GET', '/', peer: FakeAnalyst::BLOCKED_IP))->status);
+        $prev = ini_set('error_log', $this->dirs[0] . '.log');
+        try {
+            self::assertSame(200, $h(new Call('GET', '/', peer: FakeAnalyst::BLOCKED_IP))->status);
+        } finally {
+            ini_set('error_log', $prev === false ? '' : $prev);
+        }
         self::assertCount(1, $h->seen);
         self::assertNotNull($h->seen[0]->rid);
         self::assertCount(1, $this->a->snapshotRequests);   // the post-response phase tried (and will retry per cadence)
+        $log = (string) file_get_contents($this->dirs[0] . '.log');
+        @unlink($this->dirs[0] . '.log');
+        self::assertStringContainsString('snapshot poll got status 0', $log);   // cold and unanswered is never silent
     }
 
     public function testTheSecondRequestReadsTheSnapshotTheFirstOneFetched(): void

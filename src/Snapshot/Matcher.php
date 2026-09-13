@@ -145,11 +145,8 @@ final class Matcher
         return $s4->get($left) <= $n && $n <= $s->e4->get($left);
     }
 
-    /**
-     * @param Words $w
-     * @return Words
-     */
-    private static function words(Slice $s, int $o, array $w): array
+    /** @return Words */
+    private static function words(Slice $s, int $o): array
     {
         return [$s->get($o), $s->get($o + 1), $s->get($o + 2), $s->get($o + 3)];
     }
@@ -184,14 +181,14 @@ final class Matcher
         $s6 = $s->s6;
         while ($left < $right) {
             $m = ($left + $right + 1) >> 1;
-            if (self::cmp(self::words($s6, $m * 4, $w), $w) <= 0) {
+            if (self::cmp(self::words($s6, $m * 4), $w) <= 0) {
                 $left = $m;
             } else {
                 $right = $m - 1;
             }
         }
         $o = $left * 4;
-        return self::cmp(self::words($s6, $o, $w), $w) <= 0 && self::cmp($w, self::words($s->e6, $o, $w)) <= 0;
+        return self::cmp(self::words($s6, $o), $w) <= 0 && self::cmp($w, self::words($s->e6, $o)) <= 0;
     }
 
     private function blockedAsn(int $asn): bool

@@ -183,8 +183,10 @@ final class Parser
             $v4 = array_values(array_filter($v4s, static fn (array $s): bool => ($s[0] ?? -1) === $i));
             $v6 = array_values(array_filter($v6s, static fn (array $s): bool => ($s[0] ?? -1) === $i));
             $sets = [];
-            for ($k = 0, $n = max(count($v4), $count6 = count($v6)); $k < $n; $k++) {
-                $sets[] = [$k < count($v4) ? array_slice($v4[$k], 1) : [], $k < $count6 ? array_slice($v6[$k], 1) : []];
+            $n4 = count($v4);
+            $n6 = count($v6);
+            for ($k = 0; $k < max($n4, $n6); $k++) {
+                $sets[] = [$k < $n4 ? array_slice($v4[$k], 1) : [], $k < $n6 ? array_slice($v6[$k], 1) : []];
             }
             $conds = [];
             try {
