@@ -53,6 +53,12 @@ final class Client
     ) {
     }
 
+    /** The directory the snapshot, its state and the spool live in (shared by every worker). */
+    public function cacheDir(): string
+    {
+        return $this->cache->dir;
+    }
+
     /** Forget the memoised state: the next read hits the disk (one per request; the adapter calls it at entry). */
     public function invalidate(): void
     {
