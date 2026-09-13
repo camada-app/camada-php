@@ -40,6 +40,9 @@ switch ($path) {
         }
         echo 'secret page';
         break;
+    case '/big':
+        echo str_repeat('x', 20000), ' ', $ctx->rid;
+        break;
     case '/api':
         header('content-type: application/json');
         echo '{"ok":true}';

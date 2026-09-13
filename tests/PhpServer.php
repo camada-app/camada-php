@@ -21,14 +21,20 @@ final class PhpServer
     /** @var array<int, resource> */
     private array $pipes;
 
-    /** @param array<string, string> $env */
-    public function __construct(string $router, array $env = [], string $docRoot = '', int $workers = 1)
+    /**
+     * @param array<string, string> $env
+     * @param array<string, string> $ini extra `-d` settings for the server
+     */
+    public function __construct(string $router, array $env = [], string $docRoot = '', int $workers = 1, array $ini = [])
     {
         $this->port = self::freePort();
         $this->url = "http://127.0.0.1:{$this->port}";
         $cmd = [PHP_BINARY, '-S', "127.0.0.1:{$this->port}", '-d', 'display_errors=stderr', '-d', 'error_reporting=E_ALL'];
         if ($docRoot !== '') {
             array_push($cmd, '-t', $docRoot);
+        }
+        foreach ($ini as $k => $v) {
+            array_push($cmd, '-d', "{$k}={$v}");
         }
         $cmd[] = $router;
         $fullEnv = array_merge(self::inheritedEnv(), $env);

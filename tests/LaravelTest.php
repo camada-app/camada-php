@@ -8,6 +8,7 @@ use Camada\Camada;
 use Camada\Context;
 use Camada\Guarded;
 use Camada\Laravel\Middleware;
+use Camada\Runtime\Cache;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use PHPUnit\Framework\TestCase;
@@ -32,6 +33,7 @@ final class LaravelTest extends TestCase
 
     protected function tearDown(): void
     {
+        Camada::setDefault(null);
         foreach ($this->dirs as $d) {
             foreach (glob($d . '/*') ?: [] as $f) {
                 @unlink($f);
@@ -77,7 +79,8 @@ final class LaravelTest extends TestCase
     {
         $mw = new Middleware($this->engine());
         $ran = false;
-        $res = $mw->handle(self::request('GET', '/admin?x=1', [], ['REMOTE_ADDR' => FakeAnalyst::BLOCKED_IP]), static function () use (&$ran): Response {
+        $req = self::request('GET', '/admin?x=1', [], ['REMOTE_ADDR' => FakeAnalyst::BLOCKED_IP]);
+        $res = $mw->handle($req, static function () use (&$ran): Response {
             $ran = true;
             return new Response('app');
         });
@@ -86,6 +89,45 @@ final class LaravelTest extends TestCase
         self::assertSame('Forbidden', $res->getContent());
         self::assertSame('ip4', $res->headers->get('x-block-reason'));
         self::assertSame('text/plain', $res->headers->get('content-type'));
+        $res->prepare($req);   // what Response::send() runs first: Symfony suffixes the charset the SAPI adapter's bare text/plain omits
+        self::assertSame('text/plain; charset=utf-8', $res->headers->get('content-type'));
+    }
+
+    public function testAnAnswerOpensNoSocketBeforeTerminate(): void
+    {
+        // a due spool and a stale snapshot: the 403 is returned first, SHIP and REFRESH ride terminate()
+        $e = $this->engine();
+        $mw = new Middleware($e);
+        $cache = new Cache($this->dirs[0]);
+        $state = $cache->readJson('state.json') ?? [];
+        $state['loaded_at'] = microtime(true) - 3600;
+        $cache->writeJson('state.json', $state);
+        $e->spool?->push(['tap' => 'sdk-php', 'st' => 200]);
+        $cache->writeJson('flush.json', ['last_flush' => microtime(true) - 20, 'dropped' => 0]);
+        $polls = count($this->a->snapshotRequests);
+        $req = self::request('GET', '/admin', [], ['REMOTE_ADDR' => FakeAnalyst::BLOCKED_IP]);
+        $res = $mw->handle($req, static fn (Request $r): Response => new Response('app'));
+        self::assertSame(403, $res->getStatusCode());
+        self::assertSame([], $this->a->events);
+        self::assertCount($polls, $this->a->snapshotRequests);
+        $mw->terminate($req, $res);
+        self::assertCount(1, $this->a->events);
+        self::assertSame([200, 403], array_column($this->a->events[0], 'st'));
+        self::assertCount($polls + 1, $this->a->snapshotRequests);
+    }
+
+    public function testTerminateOnAFreshInstanceRunsTheHandlingEngine(): void
+    {
+        // the kernel resolves the instance it calls terminate() on anew: the engine rides the request,
+        // so the due spool ships from the engine that handled it, not from Camada::default()
+        $e = $this->engine();
+        Camada::setDefault(new Camada(env: ['CAMADA_KEY' => ''], transport: $this->a));
+        $req = self::request('GET', '/things');
+        $res = (new Middleware($e))->handle($req, static fn (Request $r): Response => new Response('app'));
+        (new Cache($this->dirs[0]))->writeJson('flush.json', ['last_flush' => microtime(true) - 20, 'dropped' => 0]);
+        (new Middleware())->terminate($req, $res);
+        self::assertCount(1, $this->a->events);
+        self::assertSame(['/things'], array_column($this->a->events[0], 'p'));
     }
 
     public function testStampsTheResponseAndShipsOnTerminate(): void
@@ -137,9 +179,9 @@ final class LaravelTest extends TestCase
         self::assertSame(302, $ok->getStatusCode());
         self::assertSame('/account', $ok->headers->get('location'));
         self::assertStringStartsWith('_cch=', (string) $ok->headers->get('set-cookie'));
-        $rows = $this->events($e);
-        self::assertSame(1, array_values(array_filter($rows, static fn (array $r): bool => isset($r['sig'])))[0]['sig']);
-        self::assertSame('198.18.0.5', array_values(array_filter($rows, static fn (array $r): bool => isset($r['sig'])))[0]['ip']);
+        $sig = array_values(array_filter($this->events($e), static fn (array $r): bool => isset($r['sig'])))[0];
+        self::assertSame(1, $sig['sig']);
+        self::assertSame('198.18.0.5', $sig['ip']);
     }
 
     public function testAnOversizedBeaconPostIs413AndAnAppExceptionShips500(): void

@@ -62,7 +62,7 @@ final class Sapi
                     $status = http_response_code();
                     $onFinish(is_int($status) ? $status : 200);
                 });
-                if (!function_exists('fastcgi_finish_request') && !function_exists('litespeed_finish_request') && ob_start()) {
+                if (Deferred::nativeFinisher() === null && ob_start()) {
                     $level = ob_get_level();   // the fallback finisher flushes this buffer with a Content-Length
                 }
             }
@@ -177,7 +177,7 @@ final class Sapi
         if ($declared > $limit) {
             return null;
         }
-        $data = file_get_contents('php://input', false, null, 0, max(1, $limit + 1));
+        $data = file_get_contents('php://input', false, null, 0, max(1, $limit + 1));   // max(): the length is int<0, max> to phpstan, not a runtime case
         if ($data === false) {
             return '';
         }

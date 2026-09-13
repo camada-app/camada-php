@@ -37,8 +37,11 @@ final class SapiTest extends TestCase
         @rmdir($this->dir);
     }
 
-    /** @param array<string, string> $env */
-    private function boot(array $env = [], string $container = 'v4', bool $seed = true, int $workers = 1): PhpServer
+    /**
+     * @param array<string, string> $env
+     * @param array<string, string> $ini
+     */
+    private function boot(array $env = [], string $container = 'v4', bool $seed = true, int $workers = 1, array $ini = []): PhpServer
     {
         $this->analyst ??= new PhpServer(__DIR__ . '/fixtures/analyst-server.php', ['ANALYST_SINK' => $this->dir . '/sink.ndjson', 'ANALYST_DELAY_MS' => $env['ANALYST_DELAY_MS'] ?? '0']);
         if ($seed) {
@@ -52,7 +55,7 @@ final class SapiTest extends TestCase
             'CAMADA_SNAPSHOT_URL' => $this->analyst->url . '/snapshot',
             'CAMADA_TRUSTED_PROXY' => 'hops:1',
             'CAMADA_CACHE_DIR' => $this->dir,
-        ], $env), workers: $workers);
+        ], $env), workers: $workers, ini: $ini);
         return $this->app;
     }
 
@@ -246,6 +249,22 @@ final class SapiTest extends TestCase
         self::assertSame(200, $after['status']);
         self::assertTrue(($cache->readJson('state.json') ?? [])['none'] ?? false);
         self::assertStringNotContainsString('PHP Warning', $app->output());
+    }
+
+    public function testZlibOutputCompressionStaysIntact(): void
+    {
+        // zlib.output_compression=On installs a buffer PHP refuses to end from userland once it
+        // compresses: the fallback finisher must neither loop on it nor stamp an uncompressed length
+        $app = $this->boot(ini: ['zlib.output_compression' => 'On']);
+        $r = $app->request('GET', '/big', ['accept-encoding' => 'gzip']);
+        self::assertSame(200, $r['status']);
+        self::assertSame(['gzip'], $r['headers']['content-encoding']);
+        self::assertSame(str_repeat('x', 20000) . ' ' . $r['headers']['x-rid'][0], gzdecode($r['body']));
+        $blk = $app->request('GET', '/', ['accept-encoding' => 'gzip', 'x-forwarded-for' => FakeAnalyst::BLOCKED_IP]);
+        self::assertSame(403, $blk['status']);
+        self::assertSame('Forbidden', $blk['body']);   // an Answer carries its own Content-Length, which switches compression off
+        $this->spool(2);
+        self::assertStringNotContainsString('PHP Notice', $app->output());
     }
 
     public function testADueSpoolShipsInThePostResponsePhase(): void
