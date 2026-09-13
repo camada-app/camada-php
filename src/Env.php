@@ -9,7 +9,6 @@ namespace Camada;
  *   CAMADA_KEY=<ingest_token>.<snap_token>   (printed by `reconcile instructions` and seed)
  *   CAMADA_INGEST_URL / CAMADA_SNAPSHOT_URL  (dev: http://localhost:8787[/snapshot])
  *   CAMADA_DISABLED=1                        kill switch, checked at boot and per request
- *   CAMADA_SERVERLESS=1                      lazy snapshot mode (the file-backed runtime is lazy anyway)
  *   CAMADA_TRUSTED_PROXY                     local override: none | vercel | hops:N | cidrs:a,b
  *   CAMADA_CHALLENGE=0                       do not enforce challenge verdicts
  *   CAMADA_CACHE_DIR                         where the shared snapshot and spool live (default: the system temp dir)
@@ -30,8 +29,8 @@ final class Env
         public readonly string $secret,        // HMAC key for the challenge nonce/cookie — never leaves the process
         public readonly string $ingestUrl,
         public readonly string $snapshotUrl,
-        public readonly bool $serverless,
         public readonly ?array $trustedProxy,
+        public readonly ?string $cacheDir,     // CAMADA_CACHE_DIR; null = the system temp dir keyed by the snapshot token
     ) {
     }
 
@@ -56,8 +55,8 @@ final class Env
             secret: $get('CAMADA_KEY') ?? "{$ingestToken}.{$snapToken}",
             ingestUrl: $ingestUrl,
             snapshotUrl: $get('CAMADA_SNAPSHOT_URL') ?? "{$ingestUrl}/snapshot",
-            serverless: $get('CAMADA_SERVERLESS') === '1',
             trustedProxy: Config::parseTrustedProxyEnv($get('CAMADA_TRUSTED_PROXY')),
+            cacheDir: $get('CAMADA_CACHE_DIR'),
         );
     }
 }

@@ -26,13 +26,11 @@ final class Guarded
     {
         try {
             $now = microtime(true);
-            if (self::$stamp !== null) {
-                $m = @filemtime(self::$stamp);
-                if ($m !== false && $now - $m < 60) {
-                    return;
-                }
-                @touch(self::$stamp);
-            } else {
+            $m = self::$stamp !== null ? @filemtime(self::$stamp) : false;
+            if ($m !== false && $now - $m < 60) {
+                return;
+            }
+            if (self::$stamp === null || !@touch(self::$stamp)) {   // no stamp, or one this process cannot write (the cache dir is exactly what the error is about): its own clock
                 if ($now - self::$lastLog < 60) {
                     return;
                 }

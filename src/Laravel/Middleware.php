@@ -19,18 +19,18 @@ use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
  * runs. handle() runs the engine and stamps the response; terminate() is the post-response phase
  * (the kernel calls it after Response::send(), which has already ended the response under FPM).
  * The Context rides `$request->attributes->get('camada')` for `scriptTag()`, `track()` and
- * `serveChallenge()`; `Camada::default()` is the engine unless one is handed in.
+ * `serveChallenge()`; `Camada::default()` is the engine unless one is handed in. The kernel
+ * resolves the instance it calls terminate() on anew (unless the class is bound as a singleton),
+ * so handle() leaves its engine on the request and terminate() takes it from there.
  */
 final class Middleware
 {
     private const CTX = 'camada';
     private const PASSED = 'camada.passed';
+    private const ENGINE = 'camada.engine';
 
-    private ?Camada $engine;
-
-    public function __construct(?Camada $engine = null)
+    public function __construct(private ?Camada $engine = null)
     {
-        $this->engine = $engine;
     }
 
     public function engine(): Camada
@@ -61,8 +61,8 @@ final class Middleware
             return $next($request);
         }
         $result = $eng->handle($req, $body);
+        $request->attributes->set(self::ENGINE, $eng);   // ship and refresh ride terminate(), an Answer's included: never a socket before the response
         if ($result instanceof Answer) {
-            $eng->deferred()->runTasks();   // the answer's row is spooled; ship and refresh ride terminate() otherwise
             return self::answer($result);
         }
         $request->attributes->set(self::CTX, $result->ctx ?? Context::inert());
@@ -110,7 +110,8 @@ final class Middleware
             }
             ($p->onFinish)($status);
         }
-        $this->engine()->deferred()->runTasks();
+        $eng = $request->attributes->get(self::ENGINE);
+        ($eng instanceof Camada ? $eng : $this->engine())->deferred()->runTasks();
     }
 
     private static function body(Request $request, int $limit): ?string

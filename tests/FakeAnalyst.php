@@ -119,6 +119,6 @@ final class FakeAnalyst implements TransportInterface
     /** @return list<array<string, mixed>> */
     public function allEvents(): array
     {
-        return array_merge(...$this->events, ...[[]]);
+        return array_merge(...$this->events);
     }
 }

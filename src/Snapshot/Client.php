@@ -135,6 +135,9 @@ final class Client
         }
         $res = $this->transport->send(new HttpRequest('GET', $this->url, $headers, null, $this->timeoutS));
         if (!in_array($res->status, [200, 204, 304], true)) {
+            if (!(($s['loaded_at'] ?? 0) > 0)) {   // still cold: a snapshot that never arrives (a dead URL, allow_url_fopen=Off, no ext-zlib) must not fail open in silence
+                Guarded::log("camada: snapshot poll got status {$res->status} from {$this->url}; enforcing nothing until it succeeds");
+            }
             return;   // 401/5xx/network: keep what we have
         }
         $s['loaded_at'] = microtime(true);

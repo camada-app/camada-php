@@ -27,6 +27,8 @@ final class Spool
     private const FLUSH = 'flush.json';
     private const ORPHAN_S = 120;   // a .sending file older than this belongs to a worker that died mid-POST
 
+    private readonly string $url;
+
     public function __construct(
         private readonly Cache $cache,
         private readonly TransportInterface $transport,
@@ -40,8 +42,6 @@ final class Spool
     ) {
         $this->url = rtrim($url, '/');
     }
-
-    private readonly string $url;
 
     /** Synchronous, never throws: one appended line under the spool lock. */
     public function push(mixed $row): void
@@ -59,7 +59,7 @@ final class Spool
                 if (@file_put_contents($this->cache->path(self::SPOOL), $line . "\n", FILE_APPEND) === false) {
                     throw new \RuntimeException('camada: cannot append to the event spool');
                 }
-                $n = $this->count() + 1;
+                $n = $this->size() + 1;
                 if ($n > $this->maxQueue) {
                     $n = $this->truncate($n);
                 }
@@ -89,18 +89,13 @@ final class Spool
         return count($kept);
     }
 
-    public function size(): int
-    {
-        return $this->count();
-    }
-
     public function dropped(): int
     {
         $d = $this->cache->readJson(self::FLUSH)['dropped'] ?? 0;
         return is_int($d) ? $d : 0;
     }
 
-    private function count(): int
+    public function size(): int
     {
         $c = $this->cache->read(self::COUNT);
         return $c === null || !$this->cache->exists(self::SPOOL) ? 0 : max(0, (int) $c);
@@ -121,7 +116,7 @@ final class Spool
     /** ≥ maxBatch rows, or flushS since the last flush — and something to ship. */
     public function due(): bool
     {
-        $n = $this->count();
+        $n = $this->size();
         if ($n <= 0) {
             return false;
         }

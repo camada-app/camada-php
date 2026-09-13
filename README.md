@@ -3,13 +3,14 @@
 camada for PHP: enforces the tenant snapshot inline (your ordered custom rules, then allow,
 block, challenge), serves a first-party proof-of-work challenge page and beacon, records the
 outcomes your handlers know (`track()`), and ships wire events in batches after the response has
-left. One package on Packagist (`camada/camada`) with a plain front-controller adapter that needs
+left. One package (`camada/camada`) with a plain front-controller adapter that needs
 nothing but `$_SERVER`, `php://input` and `header()` — FPM, `php -S`, mod_php — and a Laravel
 middleware. Fails open by design: a camada outage or bug never 5xxes your app.
 
 Not yet on Packagist — install it from a sibling checkout with a path repository, as
 [`camada-php-example`](../camada-php-example) does; publishing is one decision with the npm
-packages (SDK-G01). PHP 8.1 or newer, `ext-json` only, no runtime dependencies.
+packages (SDK-G01). PHP 8.1 or newer, `ext-json` and `ext-zlib` (the snapshot travels gzipped),
+`allow_url_fopen=On` (the transport is an http stream), no runtime dependencies.
 
 ```json
 { "repositories": [{ "type": "path", "url": "../camada-php" }], "require": { "camada/camada": "*@dev" } }
@@ -51,7 +52,7 @@ An app that reads its own config builds the engine itself and hands it in:
 
 ```php
 $cam = new Camada(env: ['CAMADA_KEY' => $key, 'CAMADA_INGEST_URL' => $ingest]);
-$ctx = Sapi::run($cam);                       // new \Camada\Laravel\Middleware($cam) for Laravel
+$ctx = Sapi::run($cam);                       // Laravel: Camada::setDefault($cam) in a service provider — the kernel builds the middleware itself
 ```
 
 ## The file-backed runtime
@@ -86,7 +87,10 @@ cache dir must be a local, writable directory (`flock()` and `rename()` are the 
 model; a network mount is not). Each container or host keeps its own copy.
 
 To enforce from request 1, warm the cache in a deploy step: `refresh()` is synchronous, single
-in-flight, and returns at once when another worker holds the lock, so the loop is bounded:
+in-flight, and returns at once when another worker holds the lock, so the loop is bounded. The
+step must warm the directory the workers read: set `CAMADA_CACHE_DIR` explicitly for both (the
+default lives under the system temp dir, which is per-service under systemd's `PrivateTmp`, and
+is created `0700`), and run it as the FPM pool's user.
 
 ```php
 $cam = Camada::default();
@@ -143,9 +147,8 @@ if ($cam->snap !== null) {                    // null when CAMADA_KEY is unset o
 
 Env: `CAMADA_KEY` (or `CAMADA_TOKEN` + `CAMADA_SNAPSHOT_TOKEN`), `CAMADA_INGEST_URL`,
 `CAMADA_SNAPSHOT_URL`, `CAMADA_TRUSTED_PROXY` (`none | vercel | hops:N | cidrs:a,b`),
-`CAMADA_CACHE_DIR`, `CAMADA_SERVERLESS=1` (accepted for parity; the file-backed runtime is lazy
-anyway), `CAMADA_CHALLENGE=0`, and the kill switch `CAMADA_DISABLED=1` (checked per request; set
-at boot, no files are touched and no request is ever made).
+`CAMADA_CACHE_DIR`, `CAMADA_CHALLENGE=0`, and the kill switch `CAMADA_DISABLED=1` (checked per
+request; set at boot, no files are touched and no request is ever made).
 
 ## The first-party beacon
 
@@ -198,15 +201,16 @@ spelling PCRE still rejects never matches here, while it does at the edge.
 - `php -S`, mod_php: the fallback flushes the adapter's buffer with a `Content-Length`; a client
   that honours it (browsers, curl, node) stops reading before the deferred work runs. Run the CLI
   server with `PHP_CLI_SERVER_WORKERS=4` or more, or a refresh in one request delays the next.
-- The cache dir is per host: a fleet polls once per host per cadence, and each host ships its
-  own spool. The tenant's `poll_seconds` keeps the cadence honest.
-- Events ship when the spool is due, in the post-response phase of the request that finds it
-  due; a failed POST drops that batch (logged at most once a minute); over 2000 spooled rows the
-  oldest half is dropped. Nothing runs at process exit and no signal handlers are installed.
+  With `zlib.output_compression=On` the response ends with the script instead (PHP's compressing
+  buffer cannot be ended early), so the deferred work adds to that request's wall time there.
+- A fleet polls once per host per cadence (the tenant's `poll_seconds`), and each host ships its
+  own spool: a failed POST drops that batch (logged at most once a minute). Nothing runs at
+  process exit and no signal handlers are installed.
 - Worker-mode SAPIs (FrankenPHP worker mode, Octane), a PSR-15 middleware and an APCu-backed
   runtime are deferred: the file-backed runtime is the one runtime today. Under Laravel the
-  middleware's `terminate()` is the post-response phase, so Octane runs it per request, but that
-  path is untested here.
+  middleware's `terminate()` is the post-response phase (an Answer's ship and refresh ride it
+  too), so Octane runs it per request, but that path is untested here; its 403 is sent as
+  `text/plain; charset=utf-8`, the charset Symfony's `prepare()` adds.
 
 ## Fail open
 
