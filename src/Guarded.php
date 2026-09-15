@@ -26,6 +26,9 @@ final class Guarded
     {
         try {
             $now = microtime(true);
+            if (self::$stamp !== null) {
+                clearstatcache(true, self::$stamp);   // another worker's touch must be seen, not this process's cached stat
+            }
             $m = self::$stamp !== null ? @filemtime(self::$stamp) : false;
             if ($m !== false && $now - $m < 60) {
                 return;
