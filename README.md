@@ -10,7 +10,8 @@ middleware. Fails open by design: a camada outage or bug never 5xxes your app.
 Not yet on Packagist — install it from a sibling checkout with a path repository, as
 [`camada-php-example`](../camada-php-example) does; publishing is one decision with the npm
 packages (SDK-G01). PHP 8.1 or newer, `ext-json` and `ext-zlib` (the snapshot travels gzipped),
-`allow_url_fopen=On` (the transport is an http stream), no runtime dependencies.
+`ext-openssl` to reach an https analyst (the transport is a small HTTP/1.1 client over a stream
+socket, so `allow_url_fopen` is not needed), no runtime dependencies.
 
 ```json
 { "repositories": [{ "type": "path", "url": "../camada-php" }], "require": { "camada/camada": "*@dev" } }
