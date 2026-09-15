@@ -37,6 +37,36 @@ final class TransportTest extends TestCase
         }
     }
 
+    /**
+     * wrangler dev answers chunked over keep-alive and idle-closes seconds later; the transport
+     * must return the moment the body is complete (terminating chunk, or Content-Length reached),
+     * not when the server finally hangs up.
+     */
+    public function testReturnsAsSoonAsTheBodyIsCompleteOnAKeepAliveSocket(): void
+    {
+        $port = PhpServer::freePort();
+        $proc = proc_open([PHP_BINARY, __DIR__ . '/fixtures/lingering-server.php', (string) $port], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        self::assertIsResource($proc);
+        try {
+            self::assertSame("started\n", fgets($pipes[1]));
+            $t = new StreamTransport();
+            foreach (['/chunked', '/length'] as $path) {
+                $t0 = microtime(true);
+                $r = $t->send(new HttpRequest('GET', "http://127.0.0.1:{$port}{$path}", [], null, 5.0));
+                $ms = (microtime(true) - $t0) * 1000;
+                self::assertSame(200, $r->status, $path);
+                self::assertSame(['path' => $path, 'keepalive' => true], json_decode($r->body, true), $path);
+                self::assertArrayNotHasKey('transfer-encoding', $r->headers);
+                self::assertLessThan(1000, $ms, "{$path} waited for the server's idle close ({$ms} ms)");
+            }
+        } finally {
+            proc_terminate($proc, SIGKILL);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            proc_close($proc);
+        }
+    }
+
     public function testADeadHostIsStatusZeroWithoutAWarning(): void
     {
         $port = PhpServer::freePort();
