@@ -90,7 +90,7 @@ final class LaravelTest extends TestCase
         self::assertSame('ip4', $res->headers->get('x-block-reason'));
         self::assertSame('text/plain', $res->headers->get('content-type'));
         $res->prepare($req);   // what Response::send() runs first: Symfony suffixes the charset the SAPI adapter's bare text/plain omits
-        self::assertSame('text/plain; charset=utf-8', $res->headers->get('content-type'));
+        self::assertSame('text/plain; charset=utf-8', strtolower((string) $res->headers->get('content-type')));   // UTF-8 or utf-8 by Symfony version
     }
 
     public function testAnAnswerOpensNoSocketBeforeTerminate(): void
