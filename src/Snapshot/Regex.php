@@ -12,10 +12,10 @@ namespace Camada\Snapshot;
  */
 final class Regex
 {
-    /** The delimited PCRE pattern, or null when this runtime rejects the spelling. */
-    public static function compile(string $js): ?string
+    /** The delimited PCRE pattern, or null when this runtime rejects the spelling. `$flags` is 'i' for a path regex (§D3 "Path matching"). */
+    public static function compile(string $js, string $flags = ''): ?string
     {
-        $p = '/' . self::translate($js) . '/';
+        $p = '/' . self::translate($js) . '/' . $flags;
         return @preg_match($p, '') === false ? null : $p;
     }
 

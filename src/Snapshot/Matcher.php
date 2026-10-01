@@ -27,13 +27,6 @@ final class Matcher
     {
     }
 
-    public static function cleanPath(?string $raw): string
-    {
-        $p = $raw === null || $raw === '' ? '/' : $raw;
-        $q = strpos($p, '?');
-        return $q === false ? $p : substr($p, 0, $q);
-    }
-
     /**
      * Binary search over interleaved [start, end] uint32 pairs sorted by start.
      *
@@ -98,23 +91,6 @@ final class Matcher
         }
         $o = $lo * 8;
         return self::cmpWords($r, $o, $w) <= 0 && self::cmpWords($r, $o + 4, $w) >= 0;
-    }
-
-    /**
-     * Walks every '/'-terminated ancestor of `path`, the way the block side does.
-     *
-     * @param array<string, true> $prefixes
-     */
-    private static function prefixHit(array $prefixes, string $path): bool
-    {
-        $i = strpos($path, '/', 1);
-        while ($i !== false) {
-            if (isset($prefixes[substr($path, 0, $i + 1)])) {
-                return true;
-            }
-            $i = strpos($path, '/', $i + 1);
-        }
-        return false;
     }
 
     private function blocked4(int $n): bool
@@ -215,29 +191,40 @@ final class Matcher
         return false;
     }
 
-    private function blockedPath(string $path): bool
+    /**
+     * Exact, prefix or regex entry for one path form (sets canonicalised at parse).
+     *
+     * @param array<string, true> $exact
+     * @param array<string, true> $prefix
+     * @param list<string> $regex
+     */
+    private static function pathIn(array $exact, array $prefix, array $regex, string $p): bool
     {
-        $s = $this->snap;
-        if (isset($s->pathsExact[$path])) {
+        if (isset($exact[$p]) || ($prefix !== [] && Path::prefixed($prefix, $p))) {
             return true;
         }
-        if ($s->pathsPrefix !== [] && self::prefixHit($s->pathsPrefix, $path)) {
-            return true;
-        }
-        foreach ($s->pathsRegex as $rx) {
-            if (Regex::test($rx, $path)) {
+        foreach ($regex as $rx) {
+            if (Regex::test($rx, $p)) {
                 return true;
             }
         }
         return false;
     }
 
+    /** @param array{string, string, string} $forms */
+    private function blockedPath(array $forms): bool
+    {
+        $s = $this->snap;
+        return Path::hit(static fn (string $p): bool => self::pathIn($s->pathsExact, $s->pathsPrefix, $s->pathsRegex, $p), $forms, true);
+    }
+
     /**
      * The block side: v3 sections plus the top-level meta.
      *
      * @param Words|null $w
+     * @param array{string, string, string} $forms
      */
-    private function blockSide(MatchInput $i, int $n4, ?array $w): ?string
+    private function blockSide(MatchInput $i, int $n4, ?array $w, array $forms): ?string
     {
         $s = $this->snap;
         if ($n4 >= 0 && $this->blocked4($n4)) {
@@ -255,18 +242,20 @@ final class Matcher
         if ($i->tlsx !== null && $i->tlsx !== '' && isset($s->tls[$i->tlsx])) {
             return 'tls';
         }
-        if (($s->pathsExact !== [] || $s->pathsPrefix !== [] || $s->pathsRegex !== []) && $this->blockedPath(self::cleanPath($i->path))) {
+        if (($s->pathsExact !== [] || $s->pathsPrefix !== [] || $s->pathsRegex !== []) && $this->blockedPath($forms)) {
             return 'path';
         }
         return null;
     }
 
     /**
-     * A v4 side list (allow or challenge). No tls axis: §A3's side meta has no tls key.
+     * A v4 side list (allow or challenge). No tls axis: §A3's side meta has no tls key. `deny` is
+     * false for the allow side: an exemption needs every canonical spelling of the path.
      *
      * @param Words|null $w
+     * @param array{string, string, string} $forms
      */
-    private static function side(RangeSet $st, MatchInput $i, int $n4, ?array $w): ?string
+    private static function side(RangeSet $st, MatchInput $i, int $n4, ?array $w, array $forms, bool $deny): ?string
     {
         if ($st->empty) {
             return null;   // the common v3 snapshot
@@ -283,14 +272,9 @@ final class Matcher
         if ($i->country !== null && $i->country !== '' && isset($st->country[$i->country])) {
             return 'country';
         }
-        if ($st->pathsExact !== [] || $st->pathsPrefix !== []) {
-            $p = self::cleanPath($i->path);
-            if (isset($st->pathsExact[$p])) {
-                return 'path';
-            }
-            if ($st->pathsPrefix !== [] && self::prefixHit($st->pathsPrefix, $p)) {
-                return 'path';
-            }
+        if (($st->pathsExact !== [] || $st->pathsPrefix !== [])
+            && Path::hit(static fn (string $p): bool => self::pathIn($st->pathsExact, $st->pathsPrefix, [], $p), $forms, $deny)) {
+            return 'path';
         }
         return null;
     }
@@ -327,8 +311,9 @@ final class Matcher
                 $w = IpParse::ip6($ip);
             }
         }
+        $forms = Path::forms($i->path);
         if ($s->rules !== []) {
-            $r = new RuleRequest(n4: $n4, ip6: $w, asn: $i->asn, country: $i->country, tlsx: $i->tlsx, path: self::cleanPath($i->path), ua: $i->ua, header: $i->header);
+            $r = new RuleRequest(n4: $n4, ip6: $w, asn: $i->asn, country: $i->country, tlsx: $i->tlsx, paths: $forms, ua: $i->ua, header: $i->header);
             foreach ($s->rules as $rule) {   // the order IS the precedence (§A4): first match wins
                 foreach ($rule->conds as $cond) {
                     if (!$cond($r)) {
@@ -338,15 +323,15 @@ final class Matcher
                 return self::ruleResult($rule, $s->version);
             }
         }
-        $reason = self::side($s->allow, $i, $n4, $w);
+        $reason = self::side($s->allow, $i, $n4, $w, $forms, false);
         if ($reason !== null) {
             return new MatchResult(allowed: true, reason: $reason, version: $s->version);
         }
-        $reason = $this->blockSide($i, $n4, $w);
+        $reason = $this->blockSide($i, $n4, $w, $forms);
         if ($reason !== null) {
             return new MatchResult(block: true, reason: $reason, version: $s->version);
         }
-        $reason = self::side($s->challenge, $i, $n4, $w);
+        $reason = self::side($s->challenge, $i, $n4, $w, $forms, true);
         if ($reason !== null) {
             return new MatchResult(challenge: true, reason: $reason, version: $s->version);
         }
