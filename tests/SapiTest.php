@@ -297,7 +297,8 @@ final class SapiTest extends TestCase
         $cache->writeJson('flush.json', ['last_flush' => 0, 'dropped' => 0]);
         self::assertSame(200, $app->request('GET', '/api')['status']);   // ships (and drops) the spool post-response
         usleep(300_000);
-        self::assertSame(200, $app->request('GET', '/api')['status']);
+        $again = $app->request('GET', '/api');
+        self::assertSame(200, $again['status']);
         $out = $app->output();
         self::assertStringNotContainsString('PHP Warning', $out);
         self::assertStringNotContainsString('PHP Fatal', $out);
