@@ -10,6 +10,7 @@ use Camada\Guarded;
 use Camada\Runtime\Cache;
 use Camada\Runtime\Lock;
 use Camada\Transport\HttpRequest;
+use Camada\Transport\HttpResponse;
 use Camada\Transport\TransportInterface;
 
 /**
@@ -19,7 +20,7 @@ use Camada\Transport\TransportInterface;
  *   304  nothing changed; config header repeated (config refreshes every poll for free)
  *   204  authenticated, no snapshot published -> enforce nothing, fail open
  * Semantics ported exactly: single in-flight load (refresh.lock, across workers); loaded_at
- * stamped even on 204 (retry per poll cadence, not per request); any error keeps the previous
+ * stamped last, even on 204 (retry per poll cadence, not per request); any error keeps the previous
  * snapshot; cold = fail open.
  *
  * File-backed: state.json {etag, version, loaded_at, refresh_s, config, none} steers every
@@ -140,10 +141,27 @@ final class Client
             }
             return;   // 401/5xx/network: keep what we have
         }
-        $s['loaded_at'] = microtime(true);
-        $this->readConfig($s, $res->headers['x-camada-config'] ?? null);
-        if ($res->status === 304) {
+        // loaded_at is stamped last, in the one state.json write (even when the body turns out corrupt,
+        // so it is retried per poll cadence, not per request): "not cold" is what every worker reads as
+        // "rules in place", so it must not be on disk before snapshot.bin and its meta are.
+        try {
+            $this->readConfig($s, $res->headers['x-camada-config'] ?? null);
+            $this->publish($res, $s);
+        } finally {
+            $s['loaded_at'] = microtime(true);
             $this->cache->writeJson(self::STATE, $s);
+        }
+    }
+
+    /**
+     * Writes the container a 200 carries (or clears it on 204) and moves $s on to match; the caller
+     * writes $s.
+     *
+     * @param array<string, mixed> $s
+     */
+    private function publish(HttpResponse $res, array &$s): void
+    {
+        if ($res->status === 304) {
             return;
         }
         if ($res->status === 204) {   // no snapshot published: enforce nothing
@@ -152,12 +170,8 @@ final class Client
             $s['etag'] = null;
             $s['version'] = null;
             $s['none'] = true;
-            $this->cache->writeJson(self::STATE, $s);
             return;
         }
-        // loaded_at is stamped before the body is judged: a corrupt frame keeps the previous snapshot
-        // and retries per poll cadence, not per request (the collector's stance)
-        $this->cache->writeJson(self::STATE, $s);
         $body = $res->body;
         if (strlen($body) < 4) {
             throw new \RuntimeException('camada: truncated snapshot frame');
@@ -186,7 +200,6 @@ final class Client
         $s['etag'] = $etag;
         $s['version'] = $meta['version'] ?? null;
         $s['none'] = false;
-        $this->cache->writeJson(self::STATE, $s);
     }
 
     /** @param array<string, mixed> $s */
