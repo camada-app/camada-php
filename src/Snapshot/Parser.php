@@ -88,8 +88,8 @@ final class Parser
             asnExtra: $sec[9] ?? Slice::empty(),
             country: self::set($meta['country'] ?? null),
             tls: self::set($meta['tls'] ?? null),
-            pathsExact: self::set($meta['pathsExact'] ?? null),
-            pathsPrefix: self::set($meta['pathsPrefix'] ?? null),
+            pathsExact: self::pathSet($meta['pathsExact'] ?? null, false),
+            pathsPrefix: self::pathSet($meta['pathsPrefix'] ?? null, true),
             pathsRegex: self::regexes($meta['pathsRegex'] ?? null),
             allow: self::rangeSet($sec[10] ?? null, $sec[11] ?? null, $meta['allow'] ?? null),
             challenge: self::rangeSet($sec[12] ?? null, $sec[13] ?? null, $meta['challenge'] ?? null),
@@ -107,6 +107,21 @@ final class Parser
                     $out[(string) $v] = true;
                 }
             }
+        }
+        return $out;
+    }
+
+    /**
+     * Exact paths -> their canonical form; prefixes -> their canonical directory key (§D3 "Path matching").
+     *
+     * @return array<string, true>
+     */
+    private static function pathSet(mixed $list, bool $prefix): array
+    {
+        $out = [];
+        foreach (array_keys(self::set($list)) as $v) {
+            $v = (string) $v;
+            $out[$prefix ? Path::dirKey($v) : Path::canon($v)] = true;
         }
         return $out;
     }
@@ -131,7 +146,7 @@ final class Parser
         $out = [];
         if (is_array($list)) {
             foreach ($list as $p) {
-                $rx = is_string($p) ? Regex::compile($p) : null;
+                $rx = is_string($p) ? Regex::compile($p, 'i') : null;   // path regexes are case-insensitive (§D3)
                 if ($rx !== null) {
                     $out[] = $rx;
                 }
@@ -149,8 +164,8 @@ final class Parser
             r6: $r6 !== null ? $r6->toArray() : [],
             asn: self::intSet($m['asn'] ?? null),
             country: self::set($m['country'] ?? null),
-            pathsExact: self::set($m['pathsExact'] ?? null),
-            pathsPrefix: self::set($m['pathsPrefix'] ?? null),
+            pathsExact: self::pathSet($m['pathsExact'] ?? null, false),
+            pathsPrefix: self::pathSet($m['pathsPrefix'] ?? null, true),
         );
     }
 
@@ -199,7 +214,7 @@ final class Parser
                         continue 2;
                     }
                     /** @var array<string, mixed> $c */
-                    $conds[] = self::compileCond($c, $sets);
+                    $conds[] = self::compileCond($c, $sets, $action !== 'skip');
                 }
             } catch (\Throwable) {
                 continue;
@@ -221,7 +236,6 @@ final class Parser
             'asn' => $r->asn === null ? null : (string) $r->asn,
             'country' => $r->country !== null && $r->country !== '' ? $r->country : null,
             'tlsx' => $r->tlsx !== null && $r->tlsx !== '' ? $r->tlsx : null,
-            'path' => $r->path,
             'ua' => $r->ua !== null && $r->ua !== '' ? $r->ua : null,
             default => null,   // an entity-plane field (bot.verified, rule): never true here
         };
@@ -233,12 +247,19 @@ final class Parser
      *
      * @param array<string, mixed> $c
      * @param list<array{list<int>, list<int>}> $sets
+     * @param bool $deny the rule blocks, challenges or warns (any path spelling fires it); false for a skip (every canonical one must)
      * @return \Closure(RuleRequest): bool
      */
-    private static function compileCond(array $c, array &$sets): \Closure
+    private static function compileCond(array $c, array &$sets, bool $deny): \Closure
     {
         $f = (string) ($c['f'] ?? '');
         $op = (string) ($c['op'] ?? '');
+        if ($f === 'path') {   // every path op reads the canonical forms (§D3 "Path matching"), never fieldValue
+            $raw = $c['v'] ?? null;
+            $vals = is_array($raw) ? array_map(static fn (mixed $x): string => is_scalar($x) ? (string) $x : '', array_values($raw)) : [is_scalar($raw) ? (string) $raw : ''];
+            $pred = Path::pred($op, $vals);
+            return static fn (RuleRequest $r): bool => Path::hit($pred, $r->paths, $deny);
+        }
         $negate = $op === 'is_not' || $op === 'not_in';
         // A header condition reads the request through the caller's getter. The name is lower-cased
         // once, here; a tap that cannot read headers (no getter) and a header the request does not

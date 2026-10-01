@@ -14,6 +14,7 @@ final class RuleRequest
 {
     /**
      * @param Words|null $ip6
+     * @param array{string, string, string} $paths [raw (query cut), lit, full] — see Path::forms
      * @param \Closure(string): ?string|null $header called with an already lower-cased name; absent where the tap cannot read headers
      */
     public function __construct(
@@ -22,7 +23,7 @@ final class RuleRequest
         public readonly ?int $asn = null,
         public readonly ?string $country = null,
         public readonly ?string $tlsx = null,
-        public readonly string $path = '/',           // already query-stripped
+        public readonly array $paths = ['/', '/', '/'],
         public readonly ?string $ua = null,
         public readonly ?\Closure $header = null,
     ) {
