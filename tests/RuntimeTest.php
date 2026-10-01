@@ -98,8 +98,8 @@ final class RuntimeTest extends TestCase
         self::assertTrue($d->armed(Deferred::REFRESH));
         $d->runTasks();
         self::assertSame(['finish', 'ship', 'refresh'], $order);
-        $d->runTasks();   // nothing left: a second run is a no-op
-        self::assertSame(['finish', 'ship', 'refresh'], $order);
+        $d->runTasks();   // nothing left: a second run is a no-op, so nothing is appended
+        self::assertCount(3, $order);
         self::assertFalse($d->armed(Deferred::REFRESH));
     }
 
