@@ -209,6 +209,23 @@ final class EngineTest extends TestCase
         self::assertArrayNotHasKey('wrn', $ev);
     }
 
+    public function testStampsTsAtTheRequestStartSoTsPlusDurIsTheResponseEnd(): void
+    {
+        $h = $this->host(handler: static function (Context $c): array {
+            usleep(200_000);
+
+            return [200, [], 'ok'];
+        });
+        $start = (int) floor(microtime(true) * 1000);
+        $h(new Call('GET', '/slow'));
+        $end = (int) floor(microtime(true) * 1000);
+        [$ev] = $this->events($h);
+        self::assertGreaterThanOrEqual(200, $ev['dur']);
+        self::assertGreaterThanOrEqual($start, $ev['ts']);
+        self::assertLessThan($start + 100, $ev['ts']);   // not one dur later
+        self::assertEqualsWithDelta($end, $ev['ts'] + $ev['dur'], 100);
+    }
+
     public function testReusesTheSessionCookieAndMarksHttpsSecure(): void
     {
         $h = $this->host();
