@@ -285,6 +285,7 @@ class Camada
                     return;
                 }
                 $ev = $this->event($req, $rid, $sid, $newSession, $ip);
+                $ev['ts'] = (int) floor($t0 * 1000);   // the request start, the same clock read dur counts from
                 $ev['st'] = $status;
                 $ev['dur'] = (int) ((microtime(true) - $t0) * 1000);
                 if ($req->route !== null && $req->route !== '') {
