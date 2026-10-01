@@ -17,7 +17,7 @@ namespace Camada;
  */
 final class Env
 {
-    /** PLACEHOLDER default, the same one @camada/node carries — confirm the production ingest domain before any Packagist publish. */
+    /** Production ingest; CAMADA_INGEST_URL overrides it. */
     public const DEFAULT_INGEST_URL = 'https://in.camada.app';
 
     /**
