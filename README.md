@@ -8,7 +8,7 @@ nothing but `$_SERVER`, `php://input` and `header()` — FPM, `php -S`, mod_php 
 middleware. Fails open by design: a camada outage or bug never 5xxes your app.
 
 Not yet on Packagist — install it from a sibling checkout with a path repository, as
-[`camada-php-example`](../camada-php-example) does; publishing is one decision with the npm
+[`camada-php-example`](https://github.com/camada-app/camada-php-example) does; publishing is one decision with the npm
 packages (SDK-G01). PHP 8.1 or newer, `ext-json` and `ext-zlib` (the snapshot travels gzipped),
 `ext-openssl` to reach an https analyst (the transport is a small HTTP/1.1 client over a stream
 socket, so `allow_url_fopen` is not needed), no runtime dependencies.
@@ -36,12 +36,25 @@ if ($ctx === null) {
 ```
 
 ```php
-// Laravel — bootstrap/app.php (11+) or app/Http/Kernel.php: first in the global stack
-->withMiddleware(fn (Middleware $m) => $m->prepend(\Camada\Laravel\Middleware::class))
-// the context rides $request->attributes->get('camada')
+// Laravel — bootstrap/app.php (Laravel 11+), inside the existing ->withMiddleware(function (Middleware $middleware) { … })
+$middleware->prepend(\Camada\Laravel\Middleware::class);   // first in the global stack
+
+// or app/Http/Kernel.php (Laravel 10): the first entry of protected $middleware = [ … ]
+\Camada\Laravel\Middleware::class,
 ```
 
-Env (printed by camada onboarding / `npm run seed` in dev):
+```php
+// routes/web.php — the context rides $request->attributes->get('camada')
+use Camada\Camada;
+use Illuminate\Http\Request;
+
+Route::get('/', function (Request $request) {
+    $ctx = $request->attributes->get('camada');   // the middleware put it there
+    return '<html><head>' . Camada::default()->scriptTag($ctx) . '</head><body>…</body></html>';
+});
+```
+
+Env (the key is printed once when you create a project in the app):
 
 ```
 CAMADA_KEY=<ingest_token>.<snap_token>
@@ -232,6 +245,6 @@ pins the vendored beacon to `camada-browser/dist/auto.global.js` (`npm run build
 then `php scripts/sync-beacon.php` after a beacon release). Both fail by name when the checkout
 is missing rather than skipping. The SAPI suite drives the adapter over a real `php -S`.
 
-[`camada-php-example`](../camada-php-example) is the hand-test bench (`php -S` on :3005), and
+[`camada-php-example`](https://github.com/camada-app/camada-php-example) is the hand-test bench (`php -S` on :3005), and
 `node scripts/e2e-sdk-php.mjs` in `camada/edge-analyst` drives it against a seeded local analyst
 over real HTTP, cold first request included.
