@@ -29,7 +29,8 @@
     "autoload-dev": {
         "psr-4": {
             "Camada\\Tests\\": "tests/"
-        }
+        },
+        "files": ["tests/MidLoad.php"]
     },
     "scripts": {
         "lint": "phpstan analyse --level 8 --memory-limit 512M src tests",

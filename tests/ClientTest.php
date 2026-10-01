@@ -55,6 +55,24 @@ final class ClientTest extends TestCase
         self::assertNull($c->config());
     }
 
+    public function testStaysColdUntilTheFirstLoadIsFullyPublished(): void
+    {
+        // every worker reads "not cold" as "rules in place": one that reads the cache while the first
+        // load is still mid-flight must see cold, not a state.json whose snapshot.bin is not there yet
+        $a = new FakeAnalyst();
+        $seen = 'probe never ran';
+        MidLoad::$probe = function () use ($a, &$seen): void {
+            $seen = $this->client($a)->verdict(new MatchInput(ip: FakeAnalyst::BLOCKED_IP))->reason;
+        };
+        try {
+            $this->client($a)->refresh();
+        } finally {
+            MidLoad::$probe = null;
+        }
+        self::assertSame('cold', $seen);
+        self::assertTrue($this->client($a)->verdict(new MatchInput(ip: FakeAnalyst::BLOCKED_IP))->block);
+    }
+
     public function testLoadsAndEnforcesWithTheContractHeaders(): void
     {
         $a = new FakeAnalyst();
