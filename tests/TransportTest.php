@@ -89,6 +89,13 @@ final class TransportTest extends TestCase
         self::assertSame([], $r->headers);   // no answer: a retry-after on it is not honoured
     }
 
+    public function testAnEmptyGzipLabelledBodyKeepsItsStatusAndHeaders(): void
+    {
+        $r = StreamTransport::response(304, ['Content-Encoding' => 'gzip', 'ETag' => '"x"'], '');
+        self::assertSame(304, $r->status);
+        self::assertSame('"x"', $r->headers['etag']);
+    }
+
     public function testGuardedLogsAtMostOnceAMinute(): void
     {
         $dir = sys_get_temp_dir() . '/camada-guarded-' . getmypid() . '-' . random_int(1, 1_000_000);

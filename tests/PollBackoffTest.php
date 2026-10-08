@@ -255,6 +255,56 @@ final class PollBackoffTest extends TestCase
         }
     }
 
+    public function testAHealthy304WithAGzipLabelDoesNotGateAWarmClient(): void
+    {
+        $a = new FakeAnalyst();
+        $t = new class ($a) implements TransportInterface {
+            public function __construct(private readonly FakeAnalyst $a)
+            {
+            }
+
+            public function send(HttpRequest $req): HttpResponse
+            {
+                $r = $this->a->send($req);
+                // the real transport's decode step, fed what wrangler dev sends: a 304 labelled gzip, no body
+                return $r->status === 304 ? \Camada\Transport\StreamTransport::response(304, $r->headers + ['Content-Encoding' => 'gzip'], '') : $r;
+            }
+        };
+        $now = 1000.0;
+        $c = new Client('https://analyst.test/snapshot', 'snap-test', new Cache($this->dir), $t, refreshS: 30.0, clock: static function () use (&$now): float {
+            return $now;
+        });
+        $c->refresh();
+        $now = 1028.0;
+        $c->refresh();   // healthy 304
+        $now = 1034.0;
+        $c->invalidate();
+        self::assertFalse($c->due());   // status 0 would leave it stale with the 5 s gate open: due
+    }
+
+    public function testAColdThrowingTransportKeepsTheColdWarningInTheOneLine(): void
+    {
+        $t = new class () implements TransportInterface {
+            public function send(HttpRequest $req): HttpResponse
+            {
+                throw new \RuntimeException('socket exploded');
+            }
+        };
+        $log = $this->dir . '.log';
+        $prev = ini_set('error_log', $log);
+        try {
+            Guarded::useStamp(null);
+            (new Client('https://analyst.test/snapshot', 'snap-test', new Cache($this->dir), $t, refreshS: 30.0))->refresh();
+            $text = (string) @file_get_contents($log);
+            self::assertSame(1, substr_count($text, 'suppressed error'));
+            self::assertStringContainsString('enforcing nothing until it succeeds', $text);
+            self::assertStringContainsString('socket exploded', $text);
+        } finally {
+            ini_set('error_log', $prev === false ? '' : $prev);
+            @unlink($log);
+        }
+    }
+
     /** @param array<string, mixed> $patch */
     private function patchStateIn(string $dir, array $patch): void
     {
