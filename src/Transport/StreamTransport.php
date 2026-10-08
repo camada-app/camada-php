@@ -250,7 +250,8 @@ final class StreamTransport implements TransportInterface
     }
 
     /**
-     * Lower-cases the names and undoes a gzip body; one it cannot read is no answer at all.
+     * Lower-cases the names and undoes a gzip body; one it cannot read is no answer at all. An empty body (a 304 or 204 can still
+     * carry Content-Encoding: gzip) is never decoded: the status and headers stand.
      *
      * @param array<string, string> $headers
      */
@@ -260,7 +261,7 @@ final class StreamTransport implements TransportInterface
         foreach ($headers as $k => $v) {
             $lower[strtolower($k)] = $v;
         }
-        if (strtolower($lower['content-encoding'] ?? '') === 'gzip') {
+        if ($body !== '' && strtolower($lower['content-encoding'] ?? '') === 'gzip') {
             $plain = @gzdecode($body);
             if ($plain === false) {
                 return new HttpResponse(0, [], '');   // no retry-after either

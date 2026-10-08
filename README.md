@@ -90,9 +90,9 @@ in the **post-response phase**, after the client has its bytes: under FPM and Fr
 `fastcgi_finish_request()` ends the response; under `php -S` and mod_php the adapter's output
 buffer is flushed with a `Content-Length` so the client can stop reading. Then, in order: the
 request's event is appended to the spool; a due spool (≥ 500 rows, or 15 s since the last flush)
-is renamed to a private file and POSTed to `/e` in slices of ≤ 1000; a due snapshot (stale: 0.9 × the
-poll cadence, and past the failure gate) is fetched under `refresh.lock`, non-blocking — a busy lock means another worker is
-on it.
+is renamed to a private file and POSTed to `/e` in slices of ≤ 1000; a due snapshot (stale: 0.9 ×
+the poll cadence, and past the failure gate) is fetched under `refresh.lock`, non-blocking — a busy
+lock means another worker is on it.
 
 Consequences worth knowing: the first request after a deploy (or an emptied cache) is answered
 cold — it passes (fail open) and arms the refresh; the next request enforces. A request whose
