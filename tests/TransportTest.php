@@ -84,9 +84,16 @@ final class TransportTest extends TestCase
 
     public function testAnUndecodableGzipBodyIsNoAnswerAtAll(): void
     {
-        $r = StreamTransport::response(200, ['Content-Encoding' => 'gzip', 'ETag' => '"x"'], 'not gzip');
+        $r = StreamTransport::response(503, ['Content-Encoding' => 'gzip', 'ETag' => '"x"', 'Retry-After' => '30'], 'not gzip');
         self::assertSame(0, $r->status);
-        self::assertSame('"x"', $r->headers['etag']);   // names are lower-cased
+        self::assertSame([], $r->headers);   // no answer: a retry-after on it is not honoured
+    }
+
+    public function testAnEmptyGzipLabelledBodyKeepsItsStatusAndHeaders(): void
+    {
+        $r = StreamTransport::response(304, ['Content-Encoding' => 'gzip', 'ETag' => '"x"'], '');
+        self::assertSame(304, $r->status);
+        self::assertSame('"x"', $r->headers['etag']);
     }
 
     public function testGuardedLogsAtMostOnceAMinute(): void
