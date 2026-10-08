@@ -187,16 +187,22 @@ final class Client
         if ($this->snapshotVersion > 3) {
             $headers['x-camada-snapshot'] = (string) $this->snapshotVersion;   // a tenant without that container is answered with the next one down
         }
+        $cold = !(($s['loaded_at'] ?? 0) > 0);
+        $thrown = null;
         try {
             $res = $this->transport->send(new HttpRequest('GET', $this->url, $headers, null, $this->timeoutS));
         } catch (\Throwable $err) {
-            Guarded::log($err);   // still logged (rate-limited), warm or cold, and gated below as status 0
+            $thrown = $err;
+            if (!$cold) {
+                Guarded::log($err);   // logged (rate-limited) and gated below as status 0; cold folds it into the one warning below
+            }
             $res = new HttpResponse(0, [], '');   // a transport that throws is no answer
         }
         $delay = self::nextPollDelay($res->status, $res->headers['retry-after'] ?? null, $this->refreshS());
         if ($delay !== null) {
-            if (!(($s['loaded_at'] ?? 0) > 0)) {   // still cold: a snapshot that never arrives (a dead URL, allow_url_fopen=Off, no ext-zlib) must not fail open in silence
-                Guarded::log("camada: snapshot poll got status {$res->status} from {$this->url}; enforcing nothing until it succeeds");
+            if ($cold) {   // still cold: a snapshot that never arrives (a dead URL, allow_url_fopen=Off, no ext-zlib) must not fail open in silence
+                Guarded::log("camada: snapshot poll got status {$res->status} from {$this->url}; enforcing nothing until it succeeds"
+                    . ($thrown !== null ? ' (transport threw: ' . $thrown->getMessage() . ')' : ''));   // one line: the rate limit must not let the exception take the slot
             }
             // 401/5xx/network: keep what we have (cold stays cold) and gate the next poll, for every worker
             $s['next_poll_at'] = $this->now() + $delay;
