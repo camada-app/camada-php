@@ -205,8 +205,8 @@ class Camada
         // snapshot refreshes when stale — never on the request path.
         $snap->invalidate();
         $this->deferred->arm(Deferred::SHIP, static fn () => $spool->shipIfDue());
-        if ($snap->stale()) {
-            $this->deferred->arm(Deferred::REFRESH, static fn () => $snap->refresh());
+        if ($snap->due()) {
+            $this->deferred->arm(Deferred::REFRESH, static fn () => $snap->refresh(false));
         }
         $ip = $this->ip($req);
 
