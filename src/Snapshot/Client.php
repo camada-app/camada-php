@@ -51,7 +51,31 @@ final class Client
         private readonly int $snapshotVersion = Constants::DEFAULT_SNAPSHOT_VERSION,   // 5 asks for the custom rules too; 4 the sides only; 3 opts out of both
         private readonly ?float $refreshS = null,      // leave unset and the server's poll_seconds steers it; set it and it is pinned
         private readonly float $timeoutS = 3.0,
+        private readonly ?\Closure $clock = null,      // test seam: () => float seconds, in place of microtime(true)
     ) {
+    }
+
+    private function now(): float
+    {
+        return $this->clock !== null ? (float) ($this->clock)() : microtime(true);
+    }
+
+    /**
+     * Seconds to wait before the next self-initiated poll after a poll answered $status, or null when
+     * the answer was 200/204/304 (not paced: the normal cadence governs). A Retry-After in
+     * delta-seconds is honoured, floored at 5 s and capped at the current cadence (the cap wins).
+     * HTTP-dates and anything else that is not all digits read as absent. status 0 = no answer.
+     *
+     * @internal
+     */
+    public static function nextPollDelay(int $status, ?string $retryAfter, float $refreshS): ?float
+    {
+        if (in_array($status, [200, 204, 304], true)) {
+            return null;
+        }
+        $ra = trim($retryAfter ?? '', " \t");
+        $secs = preg_match('/^[0-9]+$/D', $ra) === 1 ? (strlen($ra) > 9 ? 1e9 : (float) (int) $ra) : 0.0;   // overflow reads as huge, not invalid
+        return min(max($secs, 5.0), max($refreshS, 0.0));
     }
 
     /** The directory the snapshot, its state and the spool live in (shared by every worker). */
@@ -94,17 +118,43 @@ final class Client
 
     /**
      * 0.9 x refresh so a poll landing at ~refresh-ε still counts; a full-interval comparison
-     * makes every other one a no-op (effective cadence 2x). Cold (no state) is stale.
+     * makes every other one a no-op (effective cadence 2x). Cold (no state) is stale, and so is a
+     * loaded_at in the future (the wall clock stepped back).
      */
     public function stale(): bool
     {
         $loaded = $this->state()['loaded_at'] ?? 0;
         $loaded = is_int($loaded) || is_float($loaded) ? (float) $loaded : 0.0;
-        return microtime(true) - $loaded > $this->refreshS() * 0.9;
+        $now = $this->now();
+        return $loaded <= 0 || $loaded > $now || $now - $loaded > $this->refreshS() * 0.9;
     }
 
-    /** One synchronous poll, single in-flight across workers; never throws (the post-response phase calls it). */
-    public function refresh(): void
+    /**
+     * Stale and past the failure gate (state.json next_poll_at, shared by every worker): what every
+     * self-initiated poll asks. A gate further away than one cadence means the clock stepped back;
+     * it reads as open.
+     *
+     * @internal
+     */
+    public function due(): bool
+    {
+        if (!$this->stale()) {
+            return false;
+        }
+        $nb = $this->state()['next_poll_at'] ?? null;
+        if (!(is_int($nb) || is_float($nb))) {
+            return true;
+        }
+        $now = $this->now();
+        return $nb <= $now || $nb - $now > $this->refreshS();
+    }
+
+    /**
+     * One synchronous poll, single in-flight across workers; never throws (the post-response phase
+     * calls it). $force false is the armed, self-initiated path: after taking the lock it re-checks
+     * due() and does nothing if another worker's poll got there first.
+     */
+    public function refresh(bool $force = true): void
     {
         $lock = Lock::tryAcquire($this->cache->path(self::LOCK));
         if ($lock === null) {
@@ -112,6 +162,9 @@ final class Client
         }
         try {
             $this->invalidate();
+            if (!$force && !$this->due()) {
+                return;
+            }
             $this->load();
         } catch (\Throwable $err) {   // a poll that can never succeed must not be silent, nor fatal
             Guarded::log($err);
@@ -134,13 +187,22 @@ final class Client
         if ($this->snapshotVersion > 3) {
             $headers['x-camada-snapshot'] = (string) $this->snapshotVersion;   // a tenant without that container is answered with the next one down
         }
-        $res = $this->transport->send(new HttpRequest('GET', $this->url, $headers, null, $this->timeoutS));
-        if (!in_array($res->status, [200, 204, 304], true)) {
+        try {
+            $res = $this->transport->send(new HttpRequest('GET', $this->url, $headers, null, $this->timeoutS));
+        } catch (\Throwable) {
+            $res = new HttpResponse(0, [], '');   // a transport that throws is no answer
+        }
+        $delay = self::nextPollDelay($res->status, $res->headers['retry-after'] ?? null, $this->refreshS());
+        if ($delay !== null) {
             if (!(($s['loaded_at'] ?? 0) > 0)) {   // still cold: a snapshot that never arrives (a dead URL, allow_url_fopen=Off, no ext-zlib) must not fail open in silence
                 Guarded::log("camada: snapshot poll got status {$res->status} from {$this->url}; enforcing nothing until it succeeds");
             }
-            return;   // 401/5xx/network: keep what we have
+            // 401/5xx/network: keep what we have (cold stays cold) and gate the next poll, for every worker
+            $s['next_poll_at'] = $this->now() + $delay;
+            $this->cache->writeJson(self::STATE, $s);
+            return;
         }
+        unset($s['next_poll_at']);
         // loaded_at is stamped last, in the one state.json write (even when the body turns out corrupt,
         // so it is retried per poll cadence, not per request): "not cold" is what every worker reads as
         // "rules in place", so it must not be on disk before snapshot.bin and its meta are.
@@ -148,7 +210,7 @@ final class Client
             $this->readConfig($s, $res->headers['x-camada-config'] ?? null);
             $this->publish($res, $s);
         } finally {
-            $s['loaded_at'] = microtime(true);
+            $s['loaded_at'] = $this->now();
             $this->cache->writeJson(self::STATE, $s);
         }
     }
