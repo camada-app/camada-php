@@ -41,6 +41,7 @@ final class FakeAnalyst implements TransportInterface
     public array $config = ['tenant' => 'acme', 'beacon' => true, 'sample' => 1, 'exclude' => [], 'trusted_proxy' => ['mode' => 'none'], 'poll_seconds' => 30];
     public bool $snapshotDown = false;
     public bool $ingestDown = false;
+    public ?string $snapshotRetryAfter = null;   // sent as retry-after on a forced snapshot status
     public ?int $snapshotStatus = null;   // force a status (204, 304, 401, 500)
     public string $container = 'v3';      // v3 | v4 | v5
     public bool $gzip = false;            // gzip the frame when the client asks for it
@@ -90,6 +91,9 @@ final class FakeAnalyst implements TransportInterface
                 return new HttpResponse(0, [], '');
             }
             $headers = ['x-camada-config' => (string) json_encode($this->config), 'cache-control' => 'private, no-store'];
+            if ($this->snapshotRetryAfter !== null) {
+                $headers['retry-after'] = $this->snapshotRetryAfter;
+            }
             if ($this->snapshotStatus !== null) {
                 return new HttpResponse($this->snapshotStatus, $headers, '');
             }
