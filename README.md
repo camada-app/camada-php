@@ -78,7 +78,7 @@ run become one runtime on disk that every worker of every SAPI shares:
 $CAMADA_CACHE_DIR (default: <system temp dir>/camada-<16 hex of sha256(snap token)>)
   snapshot.bin        the raw BLK container, seeked into per request (never parsed whole)
   snapshot.meta.json  its meta (rules, sides, version)
-  state.json          {etag, version, loaded_at, refresh_s, config, none}
+  state.json          {etag, version, loaded_at, refresh_s, config, none, next_poll_at}
   events.ndjson       the spool, one wire event per line       events.lock / events.count / flush.json
   refresh.lock        one refresh in flight across workers      log.stamp: one log line a minute
 ```
@@ -90,8 +90,8 @@ in the **post-response phase**, after the client has its bytes: under FPM and Fr
 `fastcgi_finish_request()` ends the response; under `php -S` and mod_php the adapter's output
 buffer is flushed with a `Content-Length` so the client can stop reading. Then, in order: the
 request's event is appended to the spool; a due spool (≥ 500 rows, or 15 s since the last flush)
-is renamed to a private file and POSTed to `/e` in slices of ≤ 1000; a stale snapshot (0.9 × the
-poll cadence) is fetched under `refresh.lock`, non-blocking — a busy lock means another worker is
+is renamed to a private file and POSTed to `/e` in slices of ≤ 1000; a due snapshot (stale: 0.9 × the
+poll cadence, and past the failure gate) is fetched under `refresh.lock`, non-blocking — a busy lock means another worker is
 on it.
 
 Consequences worth knowing: the first request after a deploy (or an emptied cache) is answered

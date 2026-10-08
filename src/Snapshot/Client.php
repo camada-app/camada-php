@@ -189,7 +189,8 @@ final class Client
         }
         try {
             $res = $this->transport->send(new HttpRequest('GET', $this->url, $headers, null, $this->timeoutS));
-        } catch (\Throwable) {
+        } catch (\Throwable $err) {
+            Guarded::log($err);   // still logged (rate-limited), warm or cold, and gated below as status 0
             $res = new HttpResponse(0, [], '');   // a transport that throws is no answer
         }
         $delay = self::nextPollDelay($res->status, $res->headers['retry-after'] ?? null, $this->refreshS());
