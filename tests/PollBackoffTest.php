@@ -4,10 +4,15 @@ declare(strict_types=1);
 
 namespace Camada\Tests;
 
+use Camada\Camada;
 use Camada\Guarded;
+use Camada\Req;
 use Camada\Runtime\Cache;
 use Camada\Snapshot\Client;
 use Camada\Snapshot\MatchInput;
+use Camada\Transport\HttpRequest;
+use Camada\Transport\HttpResponse;
+use Camada\Transport\TransportInterface;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -164,5 +169,96 @@ final class PollBackoffTest extends TestCase
         $now = 100.0;    // stepped back by far more than one cadence
         $c->invalidate();
         self::assertTrue($c->due());
+    }
+
+    /** One request through Camada::handle and the post-response phase (deferred slots armed, then run). */
+    private static function hit(Camada $e): void
+    {
+        $e->handle(new Req('GET', '/', peer: '172.16.0.9'));
+        $e->deferred()->runTasks();
+    }
+
+    /**
+     * Rewrites state.json the way time passing would.
+     *
+     * @param array<string, mixed> $patch
+     */
+    private function patchState(array $patch): void
+    {
+        $this->patchStateIn($this->dir, $patch);
+    }
+
+    public function testTheRequestPathHonoursAClosedGateAcrossEngines(): void
+    {
+        $a = new FakeAnalyst();
+        $e1 = Driver::engineWith($a, $this->dir, [], refreshS: 60.0);
+        $e2 = Driver::engineWith($a, $this->dir, [], refreshS: 60.0);
+        Driver::loaded($e1);
+        self::assertCount(1, $a->snapshotRequests);
+        $this->patchState(['loaded_at' => microtime(true) - 100]);   // stale
+        $a->snapshotStatus = 503;
+        $a->snapshotRetryAfter = '30';
+        for ($i = 0; $i < 6; $i++) {
+            self::hit($i % 2 === 0 ? $e1 : $e2);
+        }
+        self::assertCount(2, $a->snapshotRequests);   // the first request polled; the gate held for the rest, on both engines
+        $this->patchState(['next_poll_at' => microtime(true) - 1]);   // 30 s later
+        self::hit($e2);
+        self::assertCount(3, $a->snapshotRequests);
+    }
+
+    public function testAThrowingTransportIsLoggedAndStillGated(): void
+    {
+        $a = new FakeAnalyst();
+        $throwing = false;
+        $t = new class ($a, $throwing) implements TransportInterface {
+            public function __construct(private readonly FakeAnalyst $a, private bool &$throwing)
+            {
+            }
+
+            public function send(HttpRequest $req): HttpResponse
+            {
+                if ($this->throwing) {
+                    throw new \RuntimeException('socket exploded');
+                }
+                return $this->a->send($req);
+            }
+        };
+        $log = $this->dir . '.log';
+        $prev = ini_set('error_log', $log);
+        try {
+            foreach (['cold', 'warm'] as $phase) {
+                @unlink($log);
+                Guarded::useStamp(null);
+                $c = new Client('https://analyst.test/snapshot', 'snap-test', new Cache($this->dir . $phase), $t, refreshS: 30.0);
+                if ($phase === 'warm') {
+                    $c->refresh();
+                    $this->patchStateIn($this->dir . $phase, ['loaded_at' => microtime(true) - 100]);
+                    $c->invalidate();
+                }
+                $throwing = true;
+                $c->refresh();
+                $throwing = false;
+                $c->invalidate();
+                self::assertStringContainsString('socket exploded', (string) @file_get_contents($log), $phase);
+                self::assertFalse($c->due(), $phase . ': gated as status 0');
+            }
+        } finally {
+            ini_set('error_log', $prev === false ? '' : $prev);
+            foreach (['cold', 'warm'] as $phase) {
+                foreach (glob($this->dir . $phase . '/*') ?: [] as $f) {
+                    @unlink($f);
+                }
+                @rmdir($this->dir . $phase);
+            }
+            @unlink($log);
+        }
+    }
+
+    /** @param array<string, mixed> $patch */
+    private function patchStateIn(string $dir, array $patch): void
+    {
+        $cache = new Cache($dir);
+        $cache->writeJson('state.json', array_merge($cache->readJson('state.json') ?? [], $patch));
     }
 }
