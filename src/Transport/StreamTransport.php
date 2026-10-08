@@ -263,7 +263,7 @@ final class StreamTransport implements TransportInterface
         if (strtolower($lower['content-encoding'] ?? '') === 'gzip') {
             $plain = @gzdecode($body);
             if ($plain === false) {
-                return new HttpResponse(0, $lower, '');
+                return new HttpResponse(0, [], '');   // no retry-after either
             }
             unset($lower['content-encoding']);
             $body = $plain;
