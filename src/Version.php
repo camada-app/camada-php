@@ -12,6 +12,6 @@ namespace Camada;
  */
 final class Version
 {
-    public const VERSION = '0.1.2';
+    public const VERSION = '0.1.3';
     public const SDK_ID = '@camada/php/' . self::VERSION;
 }
