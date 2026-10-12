@@ -94,8 +94,10 @@ final class IpTest extends TestCase
 
     public function testSapiPeerIsRemoteAddrAndAUnixListenerWalksXffAlone(): void
     {
-        // C6 v3 adapter row (php): the peer is $_SERVER['REMOTE_ADDR'] as given. A unix-socket listener
-        // (php-fpm behind nginx on a path) leaves it empty or absent: no peer, so cidrs walks XFF alone.
+        // C6 v3 adapter row (php): the peer is $_SERVER['REMOTE_ADDR'] as given; empty or absent is no peer, so
+        // cidrs walks XFF alone (`fastcgi_param REMOTE_ADDR "";` in nginx gives that). php-fpm's own listen socket
+        // does not empty it, and nginx listening on a unix socket passes "unix:": not an ip, so no client ip unless
+        // the engine is told its listener is a unix socket (EngineTest, unixSocketListener).
         $cfg = ['mode' => 'cidrs', 'cidrs' => self::CF, 'cloudflare' => self::CF];
         $base = ['REQUEST_URI' => '/', 'HTTP_X_FORWARDED_FOR' => '1.2.3.4, 198.51.100.9, 172.64.1.1'];
         foreach ([$base, $base + ['REMOTE_ADDR' => '']] as $server) {
@@ -106,6 +108,9 @@ final class IpTest extends TestCase
         $req = Sapi::request($base + ['REMOTE_ADDR' => '::ffff:203.0.113.200']);
         self::assertSame('203.0.113.200', Ip::resolve($req->peer, $req->header('x-forwarded-for'), $cfg));   // a direct hit: the peer
         $req = Sapi::request($base + ['REMOTE_ADDR' => '/run/php-fpm.sock']);   // a host that reports a path: unreadable, never the walk
+        self::assertNull(Ip::resolve($req->peer, $req->header('x-forwarded-for'), $cfg));
+        $req = Sapi::request($base + ['REMOTE_ADDR' => 'unix:']);   // nginx's $remote_addr on a unix-socket listener
+        self::assertSame('unix:', $req->peer);
         self::assertNull(Ip::resolve($req->peer, $req->header('x-forwarded-for'), $cfg));
     }
 

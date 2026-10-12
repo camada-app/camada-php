@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Camada\Tests;
 
 use Camada\Camada;
+use Camada\Challenge\Page;
 use Camada\Context;
 use Camada\Guarded;
 use Camada\Req;
@@ -207,6 +208,26 @@ final class EngineTest extends TestCase
         self::assertSame('x.test', $ev['h']);
         self::assertArrayNotHasKey('blk', $ev);
         self::assertArrayNotHasKey('wrn', $ev);
+    }
+
+    public function testAUnixSocketListenerIsDeclaredNotGuessedFromRemoteAddr(): void
+    {
+        // camada-all-yfc6 RB-4: nginx listening on a unix socket hands php-fpm REMOTE_ADDR "unix:". That is not an
+        // ip, so by default the request has an unreadable peer and no client ip; declared (option or env), the
+        // listener has no peer and cidrs walks X-Forwarded-For alone.
+        $env = ['CAMADA_TRUSTED_PROXY' => 'cidrs:172.64.0.0/13'];
+        $call = new Call('GET', '/', headers: [['x-forwarded-for', '1.2.3.4, 198.51.100.9, 172.64.1.1']], peer: 'unix:');
+        $h = $this->host($env);
+        $h($call);
+        $evs = $this->events($h);
+        self::assertNull($evs[count($evs) - 1]['ip']);
+        foreach ([$this->host($env, null, true, unixSocketListener: true), $this->host($env + ['CAMADA_UNIX_SOCKET_LISTENER' => '1'])] as $h) {
+            self::assertTrue($h->engine->unixSocketListener);
+            $h($call);
+            $evs = $this->events($h);
+            self::assertSame('198.51.100.9', $evs[count($evs) - 1]['ip']);
+        }
+        self::assertFalse($this->host($env + ['CAMADA_UNIX_SOCKET_LISTENER' => '0'])->engine->unixSocketListener);
     }
 
     public function testStampsTsAtTheRequestStartSoTsPlusDurIsTheResponseEnd(): void
@@ -553,10 +574,12 @@ final class EngineTest extends TestCase
         self::assertSame(403, $r->status);
         self::assertNull($r->header('set-cookie'));
         self::assertStringContainsString('camada-f', $r->body);
+        self::assertSame(Page::csp(), $r->header('content-security-policy'));   // the re-served page carries its own policy
         $forged = str_repeat('f', 32);
         $r = $h(new Call('POST', '/__camada/challenge', body: "nonce={$forged}&solution=" . ChallengeTest::solve($forged) . '&to=%2F', peer: FakeAnalyst::CHALLENGED_IP));
         self::assertSame(403, $r->status);
         self::assertNull($r->header('set-cookie'));
+        self::assertSame(Page::csp(), $r->header('content-security-policy'));
     }
 
     public function testNeverRedirectsOffSite(): void

@@ -134,9 +134,14 @@ if ($cam->snap !== null) {                    // null when CAMADA_KEY is unset o
    `[v6]:port`, as Azure Application Gateway writes them) resolve to the address, and
    `::ffff:a.b.c.d` entries to `a.b.c.d`. The result is always a valid ip or null: a
    `REMOTE_ADDR` that is not an ip (a socket path, a zone id) gives null, never the
-   `X-Forwarded-For` walk. An empty or absent `REMOTE_ADDR` means no peer (php-fpm on a
-   unix socket behind your web server): the walk then reads `X-Forwarded-For` alone and trusts
-   your network edge to have written it, so clients must not reach PHP around that edge. Note that
+   `X-Forwarded-For` walk. An empty or absent `REMOTE_ADDR` means no peer: the walk then reads
+   `X-Forwarded-For` alone and trusts your network edge to have written it, so clients must not
+   reach PHP around that edge. php-fpm listening on a unix socket does not empty it (your web
+   server still passes the client's address), but nginx itself listening on a unix socket (behind
+   a load balancer or another proxy) passes `REMOTE_ADDR` `unix:`, which gives every request a null
+   ip. Declare that listener with `new Camada(unixSocketListener: true)` or
+   `CAMADA_UNIX_SOCKET_LISTENER=1` (the peer is then ignored and the walk reads `X-Forwarded-For`
+   alone), or set `fastcgi_param REMOTE_ADDR "";` in that server block. Note that
    nginx's `real_ip` module rewrites `REMOTE_ADDR` before PHP sees it; behind it the peer is
    already the client and the trusted-proxy config should say `none`.
 3. Enforces before anything else, beacon endpoints included: your ordered custom rules first (first
@@ -171,10 +176,11 @@ if ($cam->snap !== null) {                    // null when CAMADA_KEY is unset o
 | `challengePath` | `/__camada/challenge` | where the page posts its solution |
 | `snapshotVersion` | `5` | 4 drops your custom rules; 3 the allow/challenge sides too |
 | `scriptPath` / `fpPath` | `/_cam/b.js` / `/_cam/fp` | the beacon endpoints; keep them in one directory |
+| `unixSocketListener` | `false` | the web server listens on a unix socket, so `REMOTE_ADDR` is no peer: walk `X-Forwarded-For` alone (`CAMADA_UNIX_SOCKET_LISTENER=1` too) |
 
 Env: `CAMADA_KEY` (or `CAMADA_TOKEN` + `CAMADA_SNAPSHOT_TOKEN`), `CAMADA_INGEST_URL`,
 `CAMADA_SNAPSHOT_URL`, `CAMADA_TRUSTED_PROXY` (`none | vercel | hops:N | cidrs:a,b`),
-`CAMADA_CACHE_DIR`, `CAMADA_CHALLENGE=0`, and the kill switch `CAMADA_DISABLED=1` (checked per
+`CAMADA_CACHE_DIR`, `CAMADA_CHALLENGE=0`, `CAMADA_UNIX_SOCKET_LISTENER=1`, and the kill switch `CAMADA_DISABLED=1` (checked per
 request; set at boot, no files are touched and no request is ever made).
 
 ## The first-party beacon
