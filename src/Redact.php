@@ -12,14 +12,26 @@ namespace Camada;
  */
 final class Redact
 {
-    private const NAME_RE = '/(pass(word)?|tok(en)?|secret|key|api[-_]?key|auth|sess(ion)?|sig(nature)?|code|jwt|bearer|credential)/i';
-    private const JWT_RE = '/^eyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/';
-    private const HEX_RE = '/^[a-f0-9]{32,}$/i';
-    private const B64_RE = '/^[A-Za-z0-9+\/_-]{40,}={0,2}$/';
+    // Exact patterns of C6 v3, matched on decoded bytes (every pattern is ASCII, so a byte >= 0x80 never
+    // matches). NAME_RE runs on ASCII-lowercased text (nameHit), so there is no case folding at all;
+    // `\A`/`\z` are true string anchors (`$` would match before a trailing newline).
+    private const NAME_RE = '/(pass(word)?|tok(en)?|secret|key|api[-_]?key|auth|sess(ion)?|sig(nature)?|code|jwt|bearer|credential)/';
+    private const JWT_RE = '/\AeyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/';
+    private const HEX_RE = '/\A[a-fA-F0-9]{32,}\z/';
+    private const B64_RE = '/\A[A-Za-z0-9+\/_-]{40,}={0,2}\z/';
+    private const ESC_RE = '/%[0-9a-fA-F]{2}/';
 
     public const REDACT_ALLOWLIST = ['plan', 'role', 'locale', 'ab_variant'];   // additions only, never narrowing
 
-    /** Replaces credential-looking query values with ~r, preserving structure and order. */
+    /**
+     * Replaces credential-looking query parts with ~r, preserving structure and order (C6 v3). The
+     * string is split on `&`, never URL-parsed. Each part's name and value are percent-decoded
+     * (decode) before testing. `name=value` → `name=~r` when the name looks like a credential, the
+     * value looks like one, or the value holds a nested query with a credential segment (replaced
+     * whole, so payloads like `q=1' or '1'='1` stay visible to the scorer). A bare part (no `=`) →
+     * `~r` when it looks like a credential value or holds a credential segment. Either half still
+     * encoded after 4 decode passes counts as a credential. The output keeps the raw text.
+     */
     public static function scrubQuery(?string $query): string
     {
         if ($query === null || strlen($query) <= 1) {
@@ -30,14 +42,53 @@ final class Redact
         foreach (explode('&', $lead !== '' ? substr($query, 1) : $query) as $p) {
             $eq = strpos($p, '=');
             if ($eq === false) {
-                $out[] = $p;
+                $d = self::decode($p);
+                $out[] = $d === null || self::suspectValue($d) || self::nestedCred($d) ? '~r' : $p;
                 continue;
             }
             $name = substr($p, 0, $eq);
-            $value = substr($p, $eq + 1);
-            $out[] = preg_match(self::NAME_RE, $name) === 1 || self::suspectValue($value) ? "{$name}=~r" : $p;
+            $dn = self::decode($name);
+            $dv = self::decode(substr($p, $eq + 1));
+            $out[] = $dn === null || $dv === null || self::nameHit($dn) || self::suspectValue($dv) || self::nestedCred($dv) ? "{$name}=~r" : $p;
         }
         return $lead . implode('&', $out);
+    }
+
+    /**
+     * Percent-decoding that never throws: each `%HH` (ASCII hex) becomes that byte, any other `%`
+     * stays, `+` stays. Up to 4 passes; text still holding a `%HH` after them is null (scrubbed).
+     * Never urldecode/rawurldecode (`+` → space). Only ever used to TEST a part.
+     */
+    private static function decode(string $s): ?string
+    {
+        for ($i = 0; $i < 4 && preg_match(self::ESC_RE, $s) === 1; $i++) {
+            $s = (string) preg_replace_callback(self::ESC_RE, static function (array $m): string {
+                $b = hex2bin(substr($m[0], 1));   // two ASCII hex digits: always one byte
+                return $b === false ? $m[0] : $b;
+            }, $s);
+        }
+        return preg_match(self::ESC_RE, $s) === 1 ? null : $s;
+    }
+
+    /** Lowercase A-Z only, then a substring test: ASCII-only case folding by construction. */
+    private static function nameHit(string $n): bool
+    {
+        return preg_match(self::NAME_RE, strtr($n, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')) === 1;
+    }
+
+    /** A decoded value carrying `?`, `&` or `=` is a credential when one of its `[?&]` segments is (no further decoding). */
+    private static function nestedCred(string $d): bool
+    {
+        if (strpbrk($d, '?&=') === false) {
+            return false;
+        }
+        foreach (preg_split('/[?&]/', $d) ?: [] as $seg) {
+            $eq = strpos($seg, '=');
+            if ($eq === false ? self::suspectValue($seg) : self::nameHit(substr($seg, 0, $eq)) || self::suspectValue(substr($seg, $eq + 1))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -93,9 +93,11 @@ final class BuildTest extends TestCase
         for ($i = 0; $i < 1000; $i++) {
             $headers[] = ["x-{$i}", 'v'];
         }
-        $ev = Builder::wireEvent(self::req($headers, '?' . str_repeat('a', 600)), ip: '1.2.3.4', tap: 'sdk-php', rid: 'r');
+        $ev = Builder::wireEvent(self::req($headers, '?' . str_repeat('a=1&', 150)), ip: '1.2.3.4', tap: 'sdk-php', rid: 'r');
         self::assertSame(2048, strlen((string) $ev['hord']));
         self::assertSame(512, strlen((string) $ev['q']));
+        $ev = Builder::wireEvent(self::req([], '?' . str_repeat('a', 600)), ip: '1.2.3.4', tap: 'sdk-php', rid: 'r');
+        self::assertSame('?~r', $ev['q']);   // a bare 600-char token-like part is scrubbed (C6 v2)
     }
 
     public function testJa4RidesOnlyWhenKnown(): void

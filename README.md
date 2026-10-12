@@ -131,7 +131,12 @@ if ($cam->snap !== null) {                    // null when CAMADA_KEY is unset o
    the origin cannot pick its own ip. A loopback peer (127.0.0.0/8, `::1`) counts as a trusted
    hop, since it is a local front end such as App Engine's; behind one, the walk reads
    `X-Forwarded-For` from the right as before. Entries carrying a port (`ip:port`,
-   `[v6]:port`, as Azure Application Gateway writes them) resolve to the address. Note that
+   `[v6]:port`, as Azure Application Gateway writes them) resolve to the address, and
+   `::ffff:a.b.c.d` entries to `a.b.c.d`. The result is always a valid ip or null: a
+   `REMOTE_ADDR` that is not an ip (a socket path, a zone id) gives null, never the
+   `X-Forwarded-For` walk. An empty or absent `REMOTE_ADDR` means no peer (php-fpm on a
+   unix socket behind your web server): the walk then reads `X-Forwarded-For` alone and trusts
+   your network edge to have written it, so clients must not reach PHP around that edge. Note that
    nginx's `real_ip` module rewrites `REMOTE_ADDR` before PHP sees it; behind it the peer is
    already the client and the trusted-proxy config should say `none`.
 3. Enforces before anything else, beacon endpoints included: your ordered custom rules first (first
