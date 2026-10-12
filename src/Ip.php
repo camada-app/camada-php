@@ -16,30 +16,43 @@ namespace Camada;
 final class Ip
 {
     /**
-     * The client IP from the socket peer and X-Forwarded-For per the trusted-proxy config.
-     * Anything unresolvable falls back to the peer (fail safe).
+     * The client IP from the socket peer and X-Forwarded-For per the trusted-proxy config (contract
+     * C6 v3). The result is always a valid IP address or null, in every mode.
      *
-     * XFF entries are read without a port (`ip:port`, `[v6]:port`, as Azure writes them) in every
-     * mode (camada-all-0vho).
+     * XFF entries are trimmed of space and tab only, read without a port (`ip:port`, `[v6]:port`,
+     * as Azure writes them) and with a `::ffff:a.b.c.d` entry reduced to `a.b.c.d`, in every mode
+     * (camada-all-0vho). Several XFF header lines arrive joined with `, ` (Req::header).
+     *
+     * The peer is `REMOTE_ADDR` with `::ffff:` removed before a dotted quad, when that is a valid IP;
+     * it is never trimmed or port-stripped. A non-empty peer that is not a valid IP (a socket path,
+     * `ip:port`, a zone id) could not be read: the result falls back to null, never to the XFF walk.
      *
      * `cidrs` (also what the dashboard's Cloudflare option stores) walks the chain `[...xff, peer]`
      * from the right (camada-all-yfc6): if the socket peer is not a trusted proxy, the request did
      * not come through one and the peer IS the client; XFF is ignored, since anyone hitting the
      * origin directly can write it. A loopback peer (127.0.0.0/8, ::1, ::ffff:127.x.x.x) counts as
      * a trusted hop: a local front end or sidecar, which no remote client can be. Loopback is
-     * trusted only as the peer, never as an XFF entry. With no peer at all the walk runs over XFF
-     * alone, as before: the host's network edge is trusted to have written it. `hops` and `vercel`
-     * trust XFF by definition and do not look at the peer.
+     * trusted only as the peer, never as an XFF entry; an XFF entry that is not a valid IP is never
+     * a trusted hop. With no peer at all (`REMOTE_ADDR` absent or empty, as on a unix-socket
+     * listener) the walk runs over XFF alone: the host's network edge is trusted to have written
+     * it. `hops` and `vercel` trust XFF by definition and do not look at the peer.
      *
      * @param TrustedProxy|null $cfg
      */
     public static function resolve(?string $peer, ?string $xff, ?array $cfg): ?string
     {
-        $sock = $peer !== null && strncasecmp($peer, '::ffff:', 7) === 0 ? substr($peer, 7) : $peer;   // dual-stack v4-mapped form
+        $mapped = $peer === null || $peer === '' ? null : self::unmap($peer);   // dual-stack v4-mapped form
+        $sock = $mapped !== null && self::validIp($mapped) ? $mapped : null;
         if ($cfg === null || $cfg['mode'] === 'none' || $xff === null || $xff === '') {
             return $sock;
         }
-        $entries = array_values(array_filter(array_map(static fn (string $e): string => self::stripPort(trim($e)), explode(',', $xff)), static fn (string $e): bool => $e !== ''));
+        $entries = [];
+        foreach (explode(',', $xff) as $e) {
+            $e = self::unmap(self::stripPort(trim($e, " \t")));   // SP and HTAB only, never other whitespace
+            if ($e !== '') {
+                $entries[] = $e;
+            }
+        }
         if ($entries === []) {
             return $sock;
         }
@@ -60,8 +73,8 @@ final class Ip
                     $trusted[] = $parsed;
                 }
             }
-            if ($sock !== null && !self::isLoopback($sock) && !self::trusted($sock, $trusted)) {
-                return $sock;   // the peer is the first hop: no trusted proxy wrote this XFF
+            if ($mapped !== null && ($sock === null || (!self::isLoopback($sock) && !self::trusted($sock, $trusted)))) {
+                return $sock;   // the peer is the first hop: no trusted proxy wrote this XFF; an unreadable peer never walks
             }
             foreach (array_reverse($entries) as $entry) {
                 if (!self::trusted($entry, $trusted)) {
@@ -73,9 +86,22 @@ final class Ip
         return $candidate !== null && self::validIp($candidate) ? $candidate : $sock;
     }
 
+    /** `::ffff:a.b.c.d` (any case) → `a.b.c.d`, only when a valid dotted quad follows; anything else unchanged. */
+    private static function unmap(string $s): string
+    {
+        if (strlen($s) < 14 || strncasecmp($s, '::ffff:', 7) !== 0) {
+            return $s;
+        }
+        $v4 = substr($s, 7);
+        return IpParse::ip4($v4) >= 0 ? $v4 : $s;
+    }
+
     /** @param list<Cidr> $trusted */
     private static function trusted(string $ip, array $trusted): bool
     {
+        if (!self::validIp($ip)) {
+            return false;   // a non-IP XFF entry is never a trusted hop
+        }
         foreach ($trusted as $t) {
             if (self::inCidr($ip, $t)) {
                 return true;
@@ -118,9 +144,21 @@ final class Ip
         return IpParse::ip6($ip) === [0, 0, 0, 1];
     }
 
+    /**
+     * A plain IPv4 or IPv6 address (C6 v3): ASCII hex groups only, so embedded dotted quads, zone
+     * ids and brackets fail (IpParse::ip6); a single leading or trailing `:` (`:8:8:8`,
+     * `2001:db8::1:`) is rejected here. Never filter_var, which accepts forms C6 rejects.
+     */
     private static function validIp(string $s): bool
     {
-        return !str_contains($s, ':') ? IpParse::ip4($s) >= 0 : IpParse::ip6($s) !== null;
+        if (!str_contains($s, ':')) {
+            return IpParse::ip4($s) >= 0;
+        }
+        $n = strlen($s);
+        if ($n < 2 || ($s[0] === ':' && $s[1] !== ':') || ($s[$n - 1] === ':' && $s[$n - 2] !== ':')) {
+            return false;
+        }
+        return IpParse::ip6($s) !== null;
     }
 
     /** @return Cidr|null */

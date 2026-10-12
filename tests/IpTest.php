@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Camada\Tests;
 
 use Camada\Config;
+use Camada\Http\Sapi;
 use Camada\Ip;
 use PHPUnit\Framework\TestCase;
 
@@ -45,6 +46,7 @@ final class IpTest extends TestCase
         self::assertSame('203.0.113.66', Ip::resolve('10.0.0.1', '203.0.113.66, 2001:db8::5', $cfg));
         self::assertSame('10.0.0.1', Ip::resolve('10.0.0.1', '10.1.2.3', $cfg));            // everything trusted: the peer
         self::assertSame('10.0.0.1', Ip::resolve('10.0.0.1', 'not-an-ip, 10.1.2.3', $cfg)); // candidate must parse
+        self::assertSame('10.0.0.1', Ip::resolve('10.0.0.1', '8.8.8.8, 2001:db8::1:', $cfg));   // a non-IP entry is never a trusted hop
         self::assertSame('10.1.2.3', Ip::resolve(null, '10.1.2.3', ['mode' => 'cidrs', 'cidrs' => ['junk', '10.0.0.0/99']]));   // unparsable cidrs trust nothing
         self::assertSame('10.0.0.1', Ip::resolve('10.0.0.1', '10.1.2.3', ['mode' => 'cidrs', 'cidrs' => ['junk', '10.0.0.0/99']]));   // ... not even the peer
     }
@@ -88,6 +90,33 @@ final class IpTest extends TestCase
         self::assertSame('203.0.113.66', Ip::resolve('169.254.130.1', '203.0.113.66, 169.254.1.1:5000', ['mode' => 'cidrs', 'cidrs' => ['169.254.0.0/16']]));
         self::assertSame('169.254.130.1', Ip::resolve('169.254.130.1', '203.0.113.66:80:90', $hops));   // malformed: the peer
         self::assertSame('169.254.130.1', Ip::resolve('169.254.130.1', '[203.0.113.66]:80', $hops));
+    }
+
+    public function testSapiPeerIsRemoteAddrAndAUnixListenerWalksXffAlone(): void
+    {
+        // C6 v3 adapter row (php): the peer is $_SERVER['REMOTE_ADDR'] as given. A unix-socket listener
+        // (php-fpm behind nginx on a path) leaves it empty or absent: no peer, so cidrs walks XFF alone.
+        $cfg = ['mode' => 'cidrs', 'cidrs' => self::CF, 'cloudflare' => self::CF];
+        $base = ['REQUEST_URI' => '/', 'HTTP_X_FORWARDED_FOR' => '1.2.3.4, 198.51.100.9, 172.64.1.1'];
+        foreach ([$base, $base + ['REMOTE_ADDR' => '']] as $server) {
+            $req = Sapi::request($server);
+            self::assertTrue($req->peer === null || $req->peer === '');
+            self::assertSame('198.51.100.9', Ip::resolve($req->peer, $req->header('x-forwarded-for'), $cfg));
+        }
+        $req = Sapi::request($base + ['REMOTE_ADDR' => '::ffff:203.0.113.200']);
+        self::assertSame('203.0.113.200', Ip::resolve($req->peer, $req->header('x-forwarded-for'), $cfg));   // a direct hit: the peer
+        $req = Sapi::request($base + ['REMOTE_ADDR' => '/run/php-fpm.sock']);   // a host that reports a path: unreadable, never the walk
+        self::assertNull(Ip::resolve($req->peer, $req->header('x-forwarded-for'), $cfg));
+    }
+
+    public function testResultIsAlwaysAValidIpOrNull(): void
+    {
+        // C6 v3: an unreadable peer is never returned verbatim, in any mode
+        self::assertNull(Ip::resolve('/run/app.sock', null, null));
+        self::assertNull(Ip::resolve('fe80::1%eth0', 'junk', ['mode' => 'hops', 'hops' => 1]));
+        self::assertSame('8.8.8.8', Ip::resolve('@', '8.8.8.8', ['mode' => 'vercel']));
+        self::assertSame('10.0.0.1', Ip::resolve('10.0.0.1', "8.8.8.8\u{a0}", ['mode' => 'vercel']));   // NBSP is not trimmed
+        self::assertSame('8.8.8.8', Ip::resolve('10.0.0.1', "\t8.8.8.8 ", ['mode' => 'vercel']));
     }
 
     public function testEnvStringForms(): void
