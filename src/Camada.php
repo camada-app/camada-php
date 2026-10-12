@@ -223,7 +223,10 @@ class Camada
         // custom rules read the user agent and the request headers (§D3).
         $v = $snap->verdict(new MatchInput(ip: $ip, path: $req->path, ua: $req->header('user-agent'), header: $req->header(...)));
         if ($v->block) {
-            $headers = [['content-type', 'text/plain'], ['x-block-reason', $v->reason ?? ''], ['x-block-version', $v->version ?? '']];
+            $headers = [
+                ['content-type', 'text/plain'], ['cache-control', 'no-store'],   // per-visitor: no shared cache keeps it (camada-all-8lp6)
+                ['x-block-reason', $v->reason ?? ''], ['x-block-version', $v->version ?? ''],
+            ];
             if ($v->rule !== null) {
                 $headers[] = ['x-block-rule', $v->rule];   // a custom rule blocked: name it, so the customer knows which row to edit
             }

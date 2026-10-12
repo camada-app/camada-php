@@ -92,6 +92,7 @@ final class EngineTest extends TestCase
         self::assertSame(403, $r->status);
         self::assertSame('Forbidden', $r->body);
         self::assertSame('ip4', $r->header('x-block-reason'));
+        self::assertSame('no-store', $r->header('cache-control'));
         self::assertSame($this->a->meta()['version'], $r->header('x-block-version'));
         self::assertSame('text/plain', $r->header('content-type'));
         self::assertNull($r->header('x-block-rule'));
@@ -457,6 +458,7 @@ final class EngineTest extends TestCase
         self::assertSame(403, $r->status);
         self::assertSame('rule', $r->header('x-block-reason'));
         self::assertSame('builtin:block', $r->header('x-block-rule'));
+        self::assertSame('no-store', $r->header('cache-control'));
         [$ev] = $this->events($h);
         self::assertSame('rule', $ev['blk']);
         self::assertSame('builtin:block', $ev['rl']);
