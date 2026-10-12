@@ -12,8 +12,8 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * The SDK conformance cases (contract C6) every server SDK runs: client-IP resolution
- * (camada-all-0vho XFF ports, camada-all-yfc6 peer-first cidrs walk) and the Referer scrub
- * (camada-all-ijsa). The files live in camada-core/test/fixtures and are missing → fail by name,
+ * (camada-all-0vho XFF ports, camada-all-yfc6 peer-first cidrs walk), the Referer scrub and the
+ * request's own query scrub (camada-all-ijsa), fixture version 3. The files live in camada-core/test/fixtures and are missing → fail by name,
  * never skip. No case is skipped here.
  *
  * @phpstan-import-type TrustedProxy from \Camada\Config
@@ -65,6 +65,41 @@ final class SdkConformanceTest extends TestCase
         $json = json_encode($ev, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         foreach ($absent as $secret) {
             self::assertStringNotContainsString($secret, $json);
+        }
+    }
+
+    /** @return iterable<string, array{string, string, list<string>}> */
+    public static function queryCases(): iterable
+    {
+        $doc = Fixtures::json('redact/query.json');
+        self::assertSame(3, $doc['version']);
+        /** @var list<array{id: string, query: string, q: string, absent?: list<string>}> $cases */
+        $cases = $doc['cases'];
+        foreach ($cases as $c) {
+            yield $c['id'] => [$c['query'], $c['q'], $c['absent'] ?? []];
+        }
+    }
+
+    /** @param list<string> $absent */
+    #[DataProvider('queryCases')]
+    public function testQueryRedaction(string $query, string $q, array $absent): void
+    {
+        $req = new Req(method: 'GET', path: '/api/me', query: $query, host: 'shop.test', httpVersion: '1.1', headers: [['accept', 'text/html']]);
+        $ev = Builder::wireEvent($req, ip: '1.2.3.4', tap: 'sdk-php', rid: 'r1', sid: null, newSession: false);
+        self::assertSame($q, $ev['q']);
+        $json = json_encode($ev, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
+        foreach ($absent as $secret) {
+            self::assertStringNotContainsString($secret, $json);
+        }
+    }
+
+    public function testFixturesAreVersion3(): void
+    {
+        foreach (['ip/resolve.json' => 100, 'redact/referer.json' => 47, 'redact/query.json' => 39] as $f => $n) {
+            $doc = Fixtures::json($f);
+            self::assertSame(3, $doc['version'], $f);
+            self::assertIsArray($doc['cases']);
+            self::assertCount($n, $doc['cases'], $f);
         }
     }
 }

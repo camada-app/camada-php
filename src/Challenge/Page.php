@@ -97,16 +97,18 @@ final class Page
 
     /**
      * The `Content-Security-Policy` value to send with `render(bits: $bits)` (camada-all-y38o): it
-     * allows only the page's own inline script and style (by `'sha256-…'` hash), a form post to the
-     * same origin, and nothing else, the same policy as @camada/core's challengePageCsp(). Send it as
-     * the response's only CSP, removing any CSP or CSP-Report-Only the app set before.
+     * allows only the page's own inline script and style (by `'sha256-…'` hash) and nothing else, the
+     * same policy as @camada/core's challengePageCsp(). There is no `form-action`: browsers apply it
+     * to the redirects that follow the POST too, so an app that 302s on to an external sign-in after
+     * verify's 302 would be blocked. Send it as the response's only CSP, removing any CSP or
+     * CSP-Report-Only the app set before.
      */
     public static function csp(int $bits = Format::POW_BITS): string
     {
         $bits = self::clampBits($bits);
         return self::$cspCache[$bits] ??= "default-src 'none'; script-src 'sha256-" . base64_encode(hash('sha256', self::script($bits), true)) . "'; "
             . "style-src 'sha256-" . base64_encode(hash('sha256', self::style(), true)) . "'; "
-            . "form-action 'self'; base-uri 'none'; frame-ancestors 'self'";
+            . "base-uri 'none'; frame-ancestors 'self'";
     }
 
     private static function clampBits(int $bits): int

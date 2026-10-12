@@ -208,12 +208,12 @@ final class ChallengeTest extends TestCase
             self::assertStringContainsString("script-src 'sha256-" . base64_encode(hash('sha256', $script, true)) . "';", $csp);
             self::assertStringContainsString("style-src 'sha256-" . base64_encode(hash('sha256', $style, true)) . "';", $csp);
             self::assertStringContainsString("default-src 'none'", $csp);
-            self::assertStringContainsString("form-action 'self'", $csp);
+            self::assertStringNotContainsString('form-action', $csp);   // it would block the redirects after verify's 302
             self::assertStringNotContainsString('unsafe', $csp);
         }
         // the same policy @camada/core's challengePageCsp(16) sends
         self::assertSame("default-src 'none'; script-src 'sha256-ciEqEwbzJaoB3rni2OdS8TuYa+/yFdFMAkRscUn8z8k='; "
-            . "style-src 'sha256-uTQFkKw4mZsBeb9oMeUmhuhVK7WwsKvYVU1JAzADMu0='; form-action 'self'; base-uri 'none'; frame-ancestors 'self'", Page::csp());
+            . "style-src 'sha256-uTQFkKw4mZsBeb9oMeUmhuhVK7WwsKvYVU1JAzADMu0='; base-uri 'none'; frame-ancestors 'self'", Page::csp());
         self::assertSame(Page::csp(32), Page::csp(99));   // clamped like the page
         self::assertNotSame(Page::csp(12), Page::csp(16));
     }
