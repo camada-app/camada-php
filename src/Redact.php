@@ -40,6 +40,24 @@ final class Redact
         return $lead . implode('&', $out);
     }
 
+    /**
+     * A URL (a Referer) with its query and fragment run through scrubQuery (camada-all-ijsa); the
+     * scheme, host and path are kept as they are. The path gets the same treatment as the request's
+     * own path `p` (none): a same-origin Referer's path already shipped as `p` on that page's own
+     * event, and a cross-origin one carries only the origin under the browsers' default policy.
+     */
+    public static function scrubUrl(?string $url): ?string
+    {
+        if ($url === null) {
+            return null;
+        }
+        $hash = strpos($url, '#');
+        $head = $hash === false ? $url : substr($url, 0, $hash);
+        $q = strpos($head, '?');
+        $scrubbed = $q === false ? $head : substr($head, 0, $q) . self::scrubQuery(substr($head, $q));
+        return $hash === false ? $scrubbed : $scrubbed . '#' . self::scrubQuery(substr($url, $hash + 1));
+    }
+
     private static function suspectValue(string $v): bool
     {
         return preg_match(self::JWT_RE, $v) === 1 || preg_match(self::HEX_RE, $v) === 1 || preg_match(self::B64_RE, $v) === 1;

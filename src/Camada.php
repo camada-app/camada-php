@@ -351,7 +351,8 @@ class Camada
             throw new \LogicException('camada: no challenge kit');
         }
         $html = Page::render($this->kit->nonce($ip, self::nowMs()), $this->challengePath, $to);
-        return new Answer(403, [['content-type', 'text/html; charset=utf-8'], ['cache-control', 'no-store'], ['x-camada-challenge', '1']], $html);
+        return new Answer(403, [['content-type', 'text/html; charset=utf-8'], ['cache-control', 'no-store'], ['x-camada-challenge', '1'],
+            ['content-security-policy', Page::csp()]], $html);   // its own policy replaces the app's (camada-all-y38o)
     }
 
     /**

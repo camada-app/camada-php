@@ -173,6 +173,7 @@ final class LaravelTest extends TestCase
         $page = $mw->handle(self::request('GET', '/account', ['accept' => 'text/html', 'sec-fetch-dest' => 'document', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP]), $next);
         self::assertSame(403, $page->getStatusCode());
         self::assertSame('1', $page->headers->get('x-camada-challenge'));
+        self::assertSame(\Camada\Challenge\Page::csp(), $page->headers->get('content-security-policy'));   // camada-all-y38o
         $nonce = explode('"', explode('name="nonce" value="', (string) $page->getContent())[1])[0];
         $form = "nonce={$nonce}&solution=" . ChallengeTest::solve($nonce) . '&to=%2Faccount';
         $ok = $mw->handle(self::request('POST', '/__camada/challenge', ['content-type' => 'application/x-www-form-urlencoded', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP], [], $form), $next);

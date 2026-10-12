@@ -19,15 +19,27 @@ final class Ip
      * The client IP from the socket peer and X-Forwarded-For per the trusted-proxy config.
      * Anything unresolvable falls back to the peer (fail safe).
      *
+     * XFF entries are read without a port (`ip:port`, `[v6]:port`, as Azure writes them) in every
+     * mode (camada-all-0vho).
+     *
+     * `cidrs` (also what the dashboard's Cloudflare option stores) walks the chain `[...xff, peer]`
+     * from the right (camada-all-yfc6): if the socket peer is not a trusted proxy, the request did
+     * not come through one and the peer IS the client; XFF is ignored, since anyone hitting the
+     * origin directly can write it. A loopback peer (127.0.0.0/8, ::1, ::ffff:127.x.x.x) counts as
+     * a trusted hop: a local front end or sidecar, which no remote client can be. Loopback is
+     * trusted only as the peer, never as an XFF entry. With no peer at all the walk runs over XFF
+     * alone, as before: the host's network edge is trusted to have written it. `hops` and `vercel`
+     * trust XFF by definition and do not look at the peer.
+     *
      * @param TrustedProxy|null $cfg
      */
     public static function resolve(?string $peer, ?string $xff, ?array $cfg): ?string
     {
-        $sock = $peer !== null && str_starts_with($peer, '::ffff:') ? substr($peer, 7) : $peer;   // dual-stack v4-mapped form
+        $sock = $peer !== null && strncasecmp($peer, '::ffff:', 7) === 0 ? substr($peer, 7) : $peer;   // dual-stack v4-mapped form
         if ($cfg === null || $cfg['mode'] === 'none' || $xff === null || $xff === '') {
             return $sock;
         }
-        $entries = array_values(array_filter(array_map('trim', explode(',', $xff)), static fn (string $e): bool => $e !== ''));
+        $entries = array_values(array_filter(array_map(static fn (string $e): string => self::stripPort(trim($e)), explode(',', $xff)), static fn (string $e): bool => $e !== ''));
         if ($entries === []) {
             return $sock;
         }
@@ -48,21 +60,62 @@ final class Ip
                     $trusted[] = $parsed;
                 }
             }
+            if ($sock !== null && !self::isLoopback($sock) && !self::trusted($sock, $trusted)) {
+                return $sock;   // the peer is the first hop: no trusted proxy wrote this XFF
+            }
             foreach (array_reverse($entries) as $entry) {
-                $isTrusted = false;
-                foreach ($trusted as $t) {
-                    if (self::inCidr($entry, $t)) {
-                        $isTrusted = true;
-                        break;
-                    }
-                }
-                if (!$isTrusted) {
+                if (!self::trusted($entry, $trusted)) {
                     $candidate = $entry;
                     break;
                 }
             }
         }
         return $candidate !== null && self::validIp($candidate) ? $candidate : $sock;
+    }
+
+    /** @param list<Cidr> $trusted */
+    private static function trusted(string $ip, array $trusted): bool
+    {
+        foreach ($trusted as $t) {
+            if (self::inCidr($ip, $t)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * One X-Forwarded-For entry with any port removed: `[v6]:port` and `[v6]` → `v6`,
+     * `a.b.c.d:port` → `a.b.c.d`. A bare IPv6 literal is returned whole (its last group is never a
+     * port); anything else malformed comes back unchanged, so validation rejects it and the peer wins.
+     */
+    private static function stripPort(string $e): string
+    {
+        if (str_starts_with($e, '[')) {
+            $close = strpos($e, ']');
+            if ($close === false) {
+                return $e;
+            }
+            $inner = substr($e, 1, $close - 1);
+            $rest = substr($e, $close + 1);
+            return str_contains($inner, ':') && ($rest === '' || preg_match('/^:\d{1,5}$/D', $rest) === 1) ? $inner : $e;
+        }
+        if (substr_count($e, ':') !== 1) {
+            return $e;   // no colon, or a bare IPv6 literal
+        }
+        $colon = (int) strpos($e, ':');
+        $host = substr($e, 0, $colon);
+        return IpParse::ip4($host) >= 0 && preg_match('/^:\d{1,5}$/D', substr($e, $colon)) === 1 ? $host : $e;
+    }
+
+    /** 127.0.0.0/8 or ::1, any spelling. The peer's `::ffff:127.x.x.x` form is already reduced to the dotted quad. */
+    private static function isLoopback(string $ip): bool
+    {
+        if (!str_contains($ip, ':')) {
+            $n = IpParse::ip4($ip);
+            return $n >= 0 && ($n >> 24) === 127;
+        }
+        return IpParse::ip6($ip) === [0, 0, 0, 1];
     }
 
     private static function validIp(string $s): bool
