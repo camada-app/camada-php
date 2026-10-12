@@ -12,6 +12,7 @@ namespace Camada;
  *   CAMADA_TRUSTED_PROXY                     local override: none | vercel | hops:N | cidrs:a,b
  *   CAMADA_CHALLENGE=0                       do not enforce challenge verdicts
  *   CAMADA_CACHE_DIR                         where the shared snapshot and spool live (default: the system temp dir)
+ *   CAMADA_UNIX_SOCKET_LISTENER=1            the web server reaches PHP over a unix socket: REMOTE_ADDR is no peer
  *
  * @phpstan-import-type TrustedProxy from Config
  */
