@@ -89,6 +89,7 @@ final class SapiTest extends TestCase
         self::assertSame(['ip4'], $r['headers']['x-block-reason']);
         self::assertSame(['text/plain'], $r['headers']['content-type']);
         self::assertSame(['9'], $r['headers']['content-length']);
+        self::assertSame(['no-store'], $r['headers']['cache-control']);   // per-visitor: no shared cache keeps it (camada-all-8lp6)
         self::assertArrayNotHasKey('x-rid', $r['headers']);
         [$ev] = $this->spool(1);
         self::assertSame(403, $ev['st']);
@@ -96,6 +97,15 @@ final class SapiTest extends TestCase
         self::assertSame(FakeAnalyst::BLOCKED_IP, $ev['ip']);
         self::assertSame('/anything', $ev['p']);
         self::assertSame('?x=1', $ev['q']);
+    }
+
+    public function testABlockReplacesACacheControlTheHostSet(): void
+    {
+        // camada-all-8lp6: a public cache-control set before camada answered must not ride on the block 403
+        $app = $this->boot();
+        $r = $app->request('GET', '/', ['x-forwarded-for' => FakeAnalyst::BLOCKED_IP, 'x-test-upstream-cache' => '1']);
+        self::assertSame(403, $r['status']);
+        self::assertSame(['no-store'], $r['headers']['cache-control']);
     }
 
     public function testStampsTheResponseAndShipsTheEventAfterIt(): void

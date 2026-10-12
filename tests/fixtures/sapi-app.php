@@ -10,6 +10,10 @@ use Camada\Camada;
 use Camada\Http\Sapi;
 
 $cam = Camada::default();
+if (isset($_SERVER['HTTP_X_TEST_UPSTREAM_CACHE'])) {
+    // a host (a prepend file, a framework bootstrap) that marks every response public before camada runs (camada-all-8lp6)
+    header('Cache-Control: public, max-age=600');
+}
 $ctx = Sapi::run($cam);
 if ($ctx === null) {
     return;

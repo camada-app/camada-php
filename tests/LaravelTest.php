@@ -89,6 +89,8 @@ final class LaravelTest extends TestCase
         self::assertSame('Forbidden', $res->getContent());
         self::assertSame('ip4', $res->headers->get('x-block-reason'));
         self::assertSame('text/plain', $res->headers->get('content-type'));
+        self::assertTrue($res->headers->hasCacheControlDirective('no-store'));   // camada-all-8lp6
+        self::assertFalse($res->headers->hasCacheControlDirective('public'));
         $res->prepare($req);   // what Response::send() runs first: Symfony suffixes the charset the SAPI adapter's bare text/plain omits
         self::assertSame('text/plain; charset=utf-8', strtolower((string) $res->headers->get('content-type')));   // UTF-8 or utf-8 by Symfony version
     }
