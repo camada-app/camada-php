@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Camada\Tests;
 
+use Camada\Challenge\Page;
 use Camada\Runtime\Cache;
 use Camada\Snapshot\Client;
 use PHPUnit\Framework\TestCase;
@@ -159,6 +160,7 @@ final class SapiTest extends TestCase
         self::assertSame(403, $page['status']);
         self::assertSame(['1'], $page['headers']['x-camada-challenge']);
         self::assertSame(['no-store'], $page['headers']['cache-control']);
+        self::assertSame([Page::csp()], $page['headers']['content-security-policy']);   // its own policy, by hash (camada-all-y38o)
         self::assertStringContainsString('name="to" value="/account?tab=1"', $page['body']);
         $json = $app->request('GET', '/api', ['accept' => 'application/json', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP]);
         self::assertSame(403, $json['status']);
@@ -184,6 +186,16 @@ final class SapiTest extends TestCase
         $kinds = array_map(static fn (array $e): string => ($e['blk'] ?? '') . '/' . ($e['ch'] ?? '') . '/' . $e['st'], $evs);
         self::assertContains('challenge//403', $kinds);
         self::assertContains('/1/200', $kinds);
+    }
+
+    public function testTheChallengePageReplacesTheHostsCsp(): void
+    {
+        // camada-all-y38o: a strict app-wide policy would block the inline solver
+        $app = $this->boot();
+        $gate = $app->request('GET', '/gate-csp', self::HTML);
+        self::assertSame(403, $gate['status']);
+        self::assertSame([Page::csp()], $gate['headers']['content-security-policy']);
+        self::assertArrayNotHasKey('content-security-policy-report-only', $gate['headers']);
     }
 
     public function testTrackAndTheBodyReachTheApp(): void

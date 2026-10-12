@@ -30,6 +30,19 @@ final class BuildTest extends TestCase
         self::assertNull(Builder::authScheme(null));
     }
 
+    public function testRefererShipsWithItsCredentialsScrubbed(): void
+    {
+        // camada-all-ijsa: the request's own query was scrubbed, the Referer's was not
+        $jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTQyIn0.sig-sig-sig';
+        $ev = Builder::wireEvent(self::req([['referer', "https://shop.test/reset-password?token={$jwt}&code=4/0AbCdEf"], ['origin', 'https://shop.test']]), ip: '1.2.3.4', tap: 'sdk-php', rid: 'r1');
+        self::assertSame('https://shop.test/reset-password?token=~r&code=~r', $ev['ref']);
+        self::assertSame('https://shop.test', $ev['org']);
+        $json = json_encode($ev, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+        self::assertStringNotContainsString($jwt, $json);
+        self::assertStringNotContainsString('4/0AbCdEf', $json);
+        self::assertNull(Builder::wireEvent(self::req([]), ip: null, tap: 'sdk-php', rid: 'r2')['ref']);
+    }
+
     public function testEventFieldsAndCounters(): void
     {
         $headers = [['accept', 'text/html'], ['cookie', 'a=1; b=2'], ['authorization', 'Bearer t'], ['accept', '*/*'], ['user-agent', 'ua']];

@@ -173,10 +173,48 @@ final class ChallengeTest extends TestCase
 
     public function testPageIsByteIdenticalToTheFamilyPage(): void
     {
-        // the page camada-python (and @camada/core) serve, pinned by its digest so a stray edit shows up by name:
-        // sha256 of challenge_page(nonce='0'*32, action='/__camada/challenge', to='/') from camada-python
+        // the page @camada/core serves (src/challenge/page.ts, camada-all-mwpo), pinned by its digest so a stray edit shows up by name:
+        // sha256 of challengePage({ nonce: '0'.repeat(32), action: '/__camada/challenge', to: '/' })
         $html = Page::render(nonce: str_repeat('0', 32), action: '/__camada/challenge', to: '/');
-        self::assertSame('88f557a17656625f254ec7e99ab26c93470fcafe5548e04a8b307d6255323ecc', hash('sha256', $html));
-        self::assertSame(3789, strlen($html));
+        self::assertSame('c80afc5fe51bae26f1baa7da9bcecc505aa0b62d347f3ac668209bcc75887f22', hash('sha256', $html));
+        self::assertSame(3810, strlen($html));
+    }
+
+    /** @return array{string, string} the inline script and style exactly as served */
+    private static function inline(string $html): array
+    {
+        if (preg_match('#<script>(.*?)</script>#s', $html, $s) !== 1 || preg_match('#<style>(.*?)</style>#s', $html, $st) !== 1) {
+            self::fail('no inline script or style');
+        }
+        return [$s[1], $st[1]];
+    }
+
+    public function testInlineScriptNoLongerCarriesTheNonce(): void
+    {
+        // camada-all-y38o: one script (and so one hash) per bits value; the solver reads the nonce from the form
+        $a = Page::render(nonce: str_repeat('ab', 16), action: '/v', to: '/');
+        $b = Page::render(nonce: str_repeat('cd', 16), action: '/v', to: '/x');
+        self::assertSame(self::inline($a), self::inline($b));
+        self::assertStringNotContainsString('abab', self::inline($a)[0]);
+        self::assertStringContainsString('<input type="hidden" name="nonce" value="' . str_repeat('ab', 16) . '" id="camada-n">', $a);
+        self::assertStringContainsString("document.getElementById('camada-n').value", self::inline($a)[0]);
+    }
+
+    public function testPageCspAllowsExactlyItsOwnInlineScriptAndStyle(): void
+    {
+        foreach ([1, 12, 16, 32] as $bits) {
+            [$script, $style] = self::inline(Page::render(nonce: str_repeat('0', 32), action: '/v', to: '/', bits: $bits));
+            $csp = Page::csp($bits);
+            self::assertStringContainsString("script-src 'sha256-" . base64_encode(hash('sha256', $script, true)) . "';", $csp);
+            self::assertStringContainsString("style-src 'sha256-" . base64_encode(hash('sha256', $style, true)) . "';", $csp);
+            self::assertStringContainsString("default-src 'none'", $csp);
+            self::assertStringContainsString("form-action 'self'", $csp);
+            self::assertStringNotContainsString('unsafe', $csp);
+        }
+        // the same policy @camada/core's challengePageCsp(16) sends
+        self::assertSame("default-src 'none'; script-src 'sha256-ciEqEwbzJaoB3rni2OdS8TuYa+/yFdFMAkRscUn8z8k='; "
+            . "style-src 'sha256-uTQFkKw4mZsBeb9oMeUmhuhVK7WwsKvYVU1JAzADMu0='; form-action 'self'; base-uri 'none'; frame-ancestors 'self'", Page::csp());
+        self::assertSame(Page::csp(32), Page::csp(99));   // clamped like the page
+        self::assertNotSame(Page::csp(12), Page::csp(16));
     }
 }

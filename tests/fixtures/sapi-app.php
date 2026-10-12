@@ -40,6 +40,17 @@ switch ($path) {
         }
         echo 'secret page';
         break;
+    case '/gate-csp':
+        // a host that sets a strict policy on every response before the app answers (camada-all-y38o)
+        header("Content-Security-Policy: default-src 'self'");
+        header("Content-Security-Policy-Report-Only: script-src 'none'");
+        $answer = $cam->serveChallenge($ctx);
+        if ($answer !== null) {
+            Sapi::send($answer);
+            return;
+        }
+        echo 'secret page';
+        break;
     case '/big':
         echo str_repeat('x', 20000), ' ', $ctx->rid;
         break;
