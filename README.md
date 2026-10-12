@@ -125,7 +125,13 @@ if ($cam->snap !== null) {                    // null when CAMADA_KEY is unset o
    container that carries your ordered custom rules.
 2. Resolves the client from the socket peer (`$_SERVER['REMOTE_ADDR']`), combined with
    `X-Forwarded-For` only under your tenant's trusted-proxy config (or `CAMADA_TRUSTED_PROXY`
-   locally). A forwarded header on its own is never the ip: any caller can set it. Note that
+   locally). A forwarded header on its own is never the ip: any caller can set it. Under `cidrs`
+   (also what the dashboard's Cloudflare option stores) the chain starts at the peer: a peer
+   outside every trusted range is the client and `X-Forwarded-For` is ignored, so a direct hit on
+   the origin cannot pick its own ip. A loopback peer (127.0.0.0/8, `::1`) counts as a trusted
+   hop, since it is a local front end such as App Engine's; behind one, the walk reads
+   `X-Forwarded-For` from the right as before. Entries carrying a port (`ip:port`,
+   `[v6]:port`, as Azure Application Gateway writes them) resolve to the address. Note that
    nginx's `real_ip` module rewrites `REMOTE_ADDR` before PHP sees it; behind it the peer is
    already the client and the trusted-proxy config should say `none`.
 3. Enforces before anything else, beacon endpoints included: your ordered custom rules first (first
@@ -134,7 +140,9 @@ if ($cam->snap !== null) {                    // null when CAMADA_KEY is unset o
    decided, `x-block-rule`; its event ships with `blk` (and `rl`). A `warn` rule passes and stamps
    `wrn`; a `skip` rule passes with nothing stamped. Cold (no snapshot yet) passes: fail open.
 4. Challenge: a `challenge` verdict gets the self-contained proof-of-work page (or 403 JSON for a
-   non-HTML request); `POST /__camada/challenge` verifies the solution, sets `_cch` (bound to the
+   non-HTML request). The page sends its own `Content-Security-Policy`, which allows only its
+   inline script and style by hash, and `Sapi::send()` drops any CSP or CSP-Report-Only the app set
+   earlier, so a strict app-wide policy cannot block the solver; `POST /__camada/challenge` verifies the solution, sets `_cch` (bound to the
    ip, one hour) and 302s back. A request whose ip cannot be resolved is never challenged.
 5. Serves the beacon: `GET /_cam/b.js` (the `@camada/browser` build, vendored as a class constant
    and served from opcache) and `POST /_cam/fp` (≤ 32 KB, relayed onto the event batch as a

@@ -23,6 +23,18 @@ final class RedactTest extends TestCase
         self::assertSame('?flag&x=1', Redact::scrubQuery('?flag&x=1'));   // a bare name is kept as is
     }
 
+    public function testScrubUrlScrubsTheQueryAndFragmentOnly(): void
+    {
+        // camada-all-ijsa: a Referer carries the previous page's query (reset tokens, OAuth codes)
+        self::assertSame('https://a.test/reset?token=~r&code=~r', Redact::scrubUrl('https://a.test/reset?token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.s&code=4/0Ab'));
+        self::assertSame('https://a.test/p?token=~r#code=~r', Redact::scrubUrl('https://a.test/p?token=abc#code=def'));
+        self::assertSame('https://a.test/cb#access_token=~r&expires_in=3599', Redact::scrubUrl('https://a.test/cb#access_token=ya29&expires_in=3599'));
+        self::assertSame('https://a.test/orders/8812?page=2#reviews', Redact::scrubUrl('https://a.test/orders/8812?page=2#reviews'));   // the path is not scrubbed
+        self::assertSame('https://a.test/p?', Redact::scrubUrl('https://a.test/p?'));
+        self::assertSame('/reset?token=~r', Redact::scrubUrl('/reset?token=abc'));
+        self::assertNull(Redact::scrubUrl(null));
+    }
+
     public function testScrubQueryKeepsShapeAndEmpties(): void
     {
         self::assertSame('', Redact::scrubQuery(''));

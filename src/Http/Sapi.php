@@ -85,6 +85,12 @@ final class Sapi
     {
         if (!headers_sent()) {
             http_response_code($a->status);
+            foreach ($a->headers as [$k]) {
+                if ($k === 'content-security-policy') {
+                    // the challenge page brings its own policy: one the app set earlier would block its solver
+                    header_remove('content-security-policy-report-only');
+                }
+            }
             foreach ($a->headers as [$k, $v]) {
                 if ($k === 'content-type' && str_starts_with($v, 'text/') && !str_contains($v, 'charset')) {
                     // PHP appends ";charset=<default_charset>" to a bare text/* type; the contract's 403 is exactly text/plain

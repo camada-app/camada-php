@@ -14,6 +14,10 @@ namespace Camada\Challenge;
  *
  * The page carries its own SHA-256 rather than calling crypto.subtle: subtle is undefined on
  * non-secure origins (plain http on a LAN host), and 65k awaited digests would be slow anyway.
+ *
+ * CSP (camada-all-y38o): the inline script and style depend on `bits` alone (the solver reads the
+ * nonce from the form), so csp() can allow exactly them by hash and a strict app policy cannot
+ * block the solver.
  */
 final class Page
 {
@@ -65,14 +69,16 @@ final class Page
         . ".bar i{display:block;height:100%;width:30%;background:#1a1a1a;animation:camada-slide 1.1s ease-in-out infinite}\n"
         . "@keyframes camada-slide{0%{transform:translateX(-120%)}100%{transform:translateX(400%)}}\n";
 
+    /** @var array<int, string> */
+    private static array $cspCache = [];
+
     /** `action` is the verify endpoint path; `to` has already been through safeReturnTo. */
     public static function render(string $nonce, string $action, string $to, int $bits = Format::POW_BITS): string
     {
-        $bits = min(32, max(1, $bits));   // shift 32-bits must stay in range
         return "<!doctype html>\n"
             . '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' . "\n"
             . "<title>Checking your browser</title>\n"
-            . "<style>\n" . self::STYLE . "</style></head>\n"
+            . '<style>' . self::style() . "</style></head>\n"
             . "<body>\n"
             . "<main>\n"
             . "<h1>Checking your browser</h1>\n"
@@ -81,14 +87,45 @@ final class Page
             . '<div class="bar"><i></i></div>' . "\n"
             . "</main>\n"
             . '<form id="camada-f" method="POST" action="' . Format::escapeAttr($action) . '">' . "\n"
-            . '<input type="hidden" name="nonce" value="' . Format::escapeAttr($nonce) . '">' . "\n"
+            . '<input type="hidden" name="nonce" value="' . Format::escapeAttr($nonce) . '" id="camada-n">' . "\n"
             . '<input type="hidden" name="solution" id="camada-s">' . "\n"
             . '<input type="hidden" name="to" value="' . Format::escapeAttr($to) . '">' . "\n"
             . "</form>\n"
-            . '<script>' . self::SOLVER . "\n"
+            . '<script>' . self::script($bits) . "</script>\n"
+            . '</body></html>';
+    }
+
+    /**
+     * The `Content-Security-Policy` value to send with `render(bits: $bits)` (camada-all-y38o): it
+     * allows only the page's own inline script and style (by `'sha256-…'` hash), a form post to the
+     * same origin, and nothing else, the same policy as @camada/core's challengePageCsp(). Send it as
+     * the response's only CSP, removing any CSP or CSP-Report-Only the app set before.
+     */
+    public static function csp(int $bits = Format::POW_BITS): string
+    {
+        $bits = self::clampBits($bits);
+        return self::$cspCache[$bits] ??= "default-src 'none'; script-src 'sha256-" . base64_encode(hash('sha256', self::script($bits), true)) . "'; "
+            . "style-src 'sha256-" . base64_encode(hash('sha256', self::style(), true)) . "'; "
+            . "form-action 'self'; base-uri 'none'; frame-ancestors 'self'";
+    }
+
+    private static function clampBits(int $bits): int
+    {
+        return min(32, max(1, $bits));   // shift 32-bits must stay in range
+    }
+
+    private static function style(): string
+    {
+        return "\n" . self::STYLE;
+    }
+
+    /** The page's one inline script. Depends on `bits` only: the nonce comes from the form, so its hash is fixed per bits. */
+    private static function script(int $bits): string
+    {
+        return self::SOLVER . "\n"
             . "(function(){\n"
             . "  if(typeof window==='undefined'||window.__camadaAutostart===false)return;\n"
-            . '  var nonce=' . Format::escapeScript($nonce) . ',shift=' . (32 - $bits) . ";\n"
+            . "  var nonce=document.getElementById('camada-n').value,shift=" . (32 - self::clampBits($bits)) . ";\n"
             . "  function go(){\n"
             . "    for(var n=0;n<5000000;n++){\n"
             . "      if((__camadaSha256Words(nonce+'.'+n)[0]>>>shift)===0){\n"
@@ -97,8 +134,6 @@ final class Page
             . "        return}}\n"
             . "    document.getElementById('camada-msg').textContent='Could not complete the check. Please reload.'}\n"
             . "  setTimeout(go,30);\n"
-            . "})();\n"
-            . "</script>\n"
-            . '</body></html>';
+            . "})();\n";
     }
 }

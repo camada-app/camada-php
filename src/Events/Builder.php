@@ -86,7 +86,7 @@ final class Builder
             'ct' => $h('content-type'), 'cl' => $h('content-length'),
             'ua' => $h('user-agent'), 'chua' => $h('sec-ch-ua'), 'chmob' => $h('sec-ch-ua-mobile'), 'chplat' => $h('sec-ch-ua-platform'),
             'acc' => $h('accept'), 'lang' => $h('accept-language'), 'fs' => $h('sec-fetch-site'), 'fm' => $h('sec-fetch-mode'),
-            'fd' => $h('sec-fetch-dest'), 'fu' => $h('sec-fetch-user'), 'ref' => $h('referer'), 'org' => $h('origin'),
+            'fd' => $h('sec-fetch-dest'), 'fu' => $h('sec-fetch-user'), 'ref' => Redact::scrubUrl($h('referer')), 'org' => $h('origin'),   // ref: the previous page's query is scrubbed too
             'xrw' => $h('x-requested-with'), 'auth' => self::authScheme($h('authorization')),   // scheme only, never the credential
             'hm' => $mask, 'hn' => $hn, 'hb' => $hb, 'ck' => $cookie !== '' ? count(explode(';', $cookie)) : 0,
             'hord' => substr(implode(',', $names), 0, 2048),   // header order as this host reports it (a hash under FastCGI)
