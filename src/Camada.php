@@ -42,6 +42,8 @@ class Camada
     public readonly ?Spool $spool;
     public readonly ?Kit $kit;
     public readonly bool $challengeOn;
+    /** The web server reaches PHP over a unix socket and REMOTE_ADDR carries no peer (see the constructor). */
+    public readonly bool $unixSocketListener;
     private readonly bool $killed;
     private readonly Deferred $deferred;
 
@@ -51,6 +53,10 @@ class Camada
      * @param float|null $refreshS poll cadence; set, it is pinned (else the server's poll_seconds steers it)
      * @param bool $challenge enforce `challenge` verdicts with the first-party page (CAMADA_CHALLENGE=0 also off)
      * @param int $snapshotVersion 5 carries the custom rules; 4 the sides only; 3 opts out of both
+     * @param bool $unixSocketListener the front end reaches this app over a unix socket, so REMOTE_ADDR is no peer
+     *     (nginx sets `$remote_addr` to "unix:" there): requests pass a null peer and a cidrs config walks
+     *     X-Forwarded-For alone (CAMADA_UNIX_SOCKET_LISTENER=1 also on). Off, a REMOTE_ADDR that is not an ip
+     *     gives no client ip. The listener decides, never the shape of REMOTE_ADDR.
      */
     public function __construct(
         ?array $env = null,
@@ -61,9 +67,11 @@ class Camada
         bool $challenge = true,
         public readonly string $challengePath = Constants::CHALLENGE_PATH,
         int $snapshotVersion = Constants::DEFAULT_SNAPSHOT_VERSION,
+        bool $unixSocketListener = false,
     ) {
         $source = $env ?? array_merge($_ENV, getenv());
         $this->challengeOn = $challenge && ($source['CAMADA_CHALLENGE'] ?? null) !== '0';
+        $this->unixSocketListener = $unixSocketListener || ($source['CAMADA_UNIX_SOCKET_LISTENER'] ?? null) === '1';
         $this->killed = ($source[Constants::KILL_SWITCH_ENV] ?? null) === '1';
         $this->env = Env::resolve($source);
         $this->deferred = new Deferred();
@@ -138,7 +146,8 @@ class Camada
 
     private function ip(Req $req): ?string
     {
-        return Ip::resolve($req->peer, $req->header('x-forwarded-for'), $this->trustedProxy());
+        // a declared unix-socket listener has no peer, whatever REMOTE_ADDR holds: the no-peer walk
+        return Ip::resolve($this->unixSocketListener ? null : $req->peer, $req->header('x-forwarded-for'), $this->trustedProxy());
     }
 
     private static function cookieValue(?string $cookie, string $name): ?string
