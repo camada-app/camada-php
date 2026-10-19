@@ -118,6 +118,34 @@ final class ParseTest extends TestCase
         self::assertFalse(Regex::test(null, 'anything'));
     }
 
+    public function testEngineFailureFailsClosedForDenyRules(): void
+    {
+        $oldLimit = ini_get('pcre.backtrack_limit');
+        $oldJit = ini_get('pcre.jit');
+        ini_set('pcre.jit', '0');
+        ini_set('pcre.backtrack_limit', '100');
+        try {
+            $ua = str_repeat('a', 40) . 'b';
+            $rx = Regex::compile('^(a|aa)+$');
+            self::assertFalse(@preg_match((string) $rx, $ua) !== false && preg_last_error() === PREG_NO_ERROR);   // the engine does fail here
+            self::assertTrue(Regex::test($rx, $ua, true));
+            self::assertFalse(Regex::test($rx, $ua));
+            foreach (['ua' => new MatchInput(ua: $ua, path: '/x'), 'path' => new MatchInput(path: '/' . $ua)] as $f => $in) {
+                $v = $f === 'ua' ? '^(a|aa)+$' : '^/(a|aa)+$';
+                $deny = self::rulesSnapshot([['id' => 'd', 'action' => 'block', 'conds' => [['f' => $f, 'op' => 'matches', 'v' => $v]]]]);
+                self::assertSame('d', $deny->match($in)->rule, $f);
+                $skip = self::rulesSnapshot([
+                    ['id' => 's', 'action' => 'skip', 'conds' => [['f' => $f, 'op' => 'matches', 'v' => $v]]],
+                    ['id' => 'd', 'action' => 'block', 'conds' => [['f' => $f, 'op' => 'is', 'v' => $f === 'ua' ? $ua : '/' . $ua]]],
+                ]);
+                self::assertSame('d', $skip->match($in)->rule, $f . ' skip misses');
+            }
+        } finally {
+            ini_set('pcre.backtrack_limit', (string) $oldLimit);
+            ini_set('pcre.jit', (string) $oldJit);
+        }
+    }
+
     public function testDelimiterAndNonAsciiSpellingsInPatterns(): void
     {
         self::assertTrue(Regex::test(Regex::compile('^/api/v1/'), '/api/v1/x'));     // the delimiter is escaped, not fatal
