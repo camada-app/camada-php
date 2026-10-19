@@ -330,11 +330,16 @@ final class Parser
                 if ($v === null || $rx === null) {
                     return false;
                 }
-                if ($strip) {
-                    $v = self::stripControls($v);
-                }
                 // over the cap the regex never runs: a deny rule hits, a skip rule misses (never truncate)
-                return self::overCap($v) ? $deny : Regex::test($rx, $v, $deny);
+                $f = static fn (string $s): bool => self::overCap($s) ? $deny : Regex::test($rx, $s, $deny);
+                if ($strip) {
+                    $s = self::stripControls($v);
+                    if ($s !== $v) {
+                        // control chars present: a deny rule tests raw and stripped, a skip never exempts
+                        return $deny && ($f($v) || $f($s));
+                    }
+                }
+                return $f($v);
             };
         }
         if ($op === 'contains') {
