@@ -19,9 +19,17 @@ final class Regex
         return @preg_match($p, '') === false ? null : $p;
     }
 
-    public static function test(?string $compiled, string $value): bool
+    /**
+     * `$onFailure` is what an engine failure answers (backtrack or JIT stack limit, bad UTF): a deny
+     * rule passes true so a failure fails closed like an over-cap value; skip and the legacy list pass false.
+     */
+    public static function test(?string $compiled, string $value, bool $onFailure = false): bool
     {
-        return $compiled !== null && @preg_match($compiled, $value) === 1;
+        if ($compiled === null) {
+            return false;
+        }
+        $r = @preg_match($compiled, $value);
+        return $r === false || preg_last_error() !== PREG_NO_ERROR ? $onFailure : $r === 1;
     }
 
     private static function translate(string $pattern): string
