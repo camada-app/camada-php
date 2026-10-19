@@ -260,7 +260,8 @@ final class ParseTest extends TestCase
         self::assertNull($ua(str_repeat('é', 2048)));
         self::assertNull($ua(str_repeat("\u{1F600}", 1024)));
         self::assertSame('u', $ua(str_repeat("\u{1F600}", 1025)));
-        self::assertNull($ua('Mozilla/5.0 ' . str_repeat('a', 2036) . "\t"));
+        // camada-all-wh9m: a deny reads the raw value too; raw 2049 is over the cap (v2 pinned a miss)
+        self::assertSame('u', $ua('Mozilla/5.0 ' . str_repeat('a', 2036) . "\t"));
         self::assertSame('h', $hd(str_repeat('9', 2049)));
         self::assertNull($hd(str_repeat('9', 2048)));
         self::assertNull($pa('/x/' . str_repeat('a', 2045)));
@@ -284,6 +285,33 @@ final class ParseTest extends TestCase
         self::assertSame('c', $skip->match(new MatchInput(path: $sm . str_repeat('./', 1100) . 'x'))->rule);
     }
 
+    public function testDenyReadsRawAndStrippedAndSkipNeverTakesAControlChar(): void
+    {
+        $m = self::rulesSnapshot([
+            ...self::mrule('t', 'block', 'ua', null, 'a\tb'),
+            ...self::mrule('q', 'block', 'ua', null, 'sqlmap'),
+            ...self::mrule('ht', 'block', 'header', 'x-h', 'a\tb'),
+            ...self::mrule('hq', 'block', 'header', 'x-q', 'sqlmap'),
+        ]);
+        self::assertSame('t', $m->match(new MatchInput(ua: "a\tb"))->rule);
+        self::assertSame('q', $m->match(new MatchInput(ua: "sql\tmap"))->rule);
+        self::assertNull($m->match(new MatchInput(ua: 'ab'))->rule);
+        self::assertSame('ht', $m->match(new MatchInput(header: static fn (string $n): ?string => $n === 'x-h' ? "a\tb" : null))->rule);
+        self::assertSame('hq', $m->match(new MatchInput(header: static fn (string $n): ?string => $n === 'x-q' ? "sql\tmap" : null))->rule);
+        $s = self::rulesSnapshot([
+            ...self::mrule('s', 'skip', 'ua', null, '^partner-[a-z]+$'),
+            ...self::mrule('d', 'block', 'ua', null, 'partner'),
+        ]);
+        self::assertSame('s', $s->match(new MatchInput(ua: 'partner-acme'))->rule);
+        self::assertSame('d', $s->match(new MatchInput(ua: "partner-acme\n"))->rule);
+        $o = self::rulesSnapshot([
+            ...self::mrule('s', 'skip', 'ua', null, '^a+$'),
+            ...self::mrule('d', 'block', 'ua', null, '^zzz$'),
+        ]);
+        self::assertSame('d', $o->match(new MatchInput(ua: str_repeat('a', 2048) . "\t"))->rule);
+        self::assertSame('s', $o->match(new MatchInput(ua: str_repeat('a', 2048)))->rule);
+    }
+
     public function testControlCharsAreStrippedFromUaAndHeaderForMatchesOnly(): void
     {
         $m = self::rulesSnapshot([
@@ -296,7 +324,9 @@ final class ParseTest extends TestCase
         self::assertSame('e', $m->match(new MatchInput(ua: "Scrapy\t/2.11"))->rule);
         self::assertSame('e', $m->match(new MatchInput(ua: "python-requests/\x7f2"))->rule);
         self::assertNull($m->match(new MatchInput(ua: "cu\x00rl/8.4.0"))->rule);
-        self::assertSame('s', $m->match(new MatchInput(header: static fn (string $n): string => "partner-acme\n"))->rule);
+        // a skip never exempts a value with a control char (v2 pinned 's')
+        self::assertNull($m->match(new MatchInput(header: static fn (string $n): string => "partner-acme\n"))->rule);
+        self::assertSame('s', $m->match(new MatchInput(header: static fn (string $n): string => 'partner-acme'))->rule);
         self::assertNull($m->match(new MatchInput(path: "/api/v2/dump\n"))->rule);
         self::assertNull($m->match(new MatchInput(path: '/api/v2/dump%0A'))->rule);
         self::assertSame('c', $m->match(new MatchInput(path: '/api/v2/dump'))->rule);
