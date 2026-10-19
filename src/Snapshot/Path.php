@@ -140,7 +140,7 @@ final class Path
     {
         if ($op === 'matches') {
             $rx = Regex::compile($values[0] ?? '', 'i');
-            return static fn (string $p): bool => $rx !== null && (Parser::overCap($p) ? $deny : Regex::test($rx, $p));
+            return static fn (string $p): bool => $rx !== null && (Parser::overCap($p) ? $deny : Regex::test($rx, $p, $deny));
         }
         if ($op === 'starts_with') {
             $v = $values[0] ?? '';

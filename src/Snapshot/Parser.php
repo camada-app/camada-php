@@ -334,7 +334,7 @@ final class Parser
                     $v = self::stripControls($v);
                 }
                 // over the cap the regex never runs: a deny rule hits, a skip rule misses (never truncate)
-                return self::overCap($v) ? $deny : Regex::test($rx, $v);
+                return self::overCap($v) ? $deny : Regex::test($rx, $v, $deny);
             };
         }
         if ($op === 'contains') {
