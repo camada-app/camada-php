@@ -19,7 +19,7 @@ namespace Camada\Snapshot;
 final class Path
 {
     // already canonical: the common case skips the byte walk
-    private const CANON = '#^(?:/(?!\.\.?(?:/|$))[a-z0-9\-._~!$&\'()*+,=:@]+)+$#';
+    private const CANON = '#^(?:/(?!\.\.?(?:/|$))[a-z0-9\-._~!$&\'()*+,=:@]+)+$#D';
 
     private static function stripQuery(?string $raw): string
     {
@@ -81,7 +81,13 @@ final class Path
         if ($p === '/' || preg_match(self::CANON, $p) === 1) {
             return [$p, $p, $p];
         }
-        return [$p, self::canon($p, false), self::canon($p, true)];
+        return [self::encodeControls($p), self::canon($p, false), self::canon($p, true)];
+    }
+
+    /** The raw form with each [\x00-\x1f\x7f] byte written %xx, so a decoded path cannot carry one. */
+    private static function encodeControls(string $p): string
+    {
+        return preg_replace_callback('/[\x00-\x1f\x7f]/', static fn (array $m): string => sprintf('%%%02x', ord($m[0])), $p) ?? $p;
     }
 
     public static function dir(string $p): string
@@ -130,11 +136,11 @@ final class Path
      * @param list<string> $values
      * @return \Closure(string): bool
      */
-    public static function pred(string $op, array $values): \Closure
+    public static function pred(string $op, array $values, bool $deny): \Closure
     {
         if ($op === 'matches') {
             $rx = Regex::compile($values[0] ?? '', 'i');
-            return static fn (string $p): bool => Regex::test($rx, $p);
+            return static fn (string $p): bool => $rx !== null && (Parser::overCap($p) ? $deny : Regex::test($rx, $p));
         }
         if ($op === 'starts_with') {
             $v = $values[0] ?? '';

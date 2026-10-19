@@ -9,6 +9,7 @@ use Camada\Snapshot\Matcher;
 use Camada\Snapshot\MatchInput;
 use Camada\Snapshot\MemoryWords;
 use Camada\Snapshot\Parser;
+use Camada\Snapshot\Path;
 use Camada\Snapshot\Regex;
 use PHPUnit\Framework\TestCase;
 
@@ -169,8 +170,8 @@ final class ParseTest extends TestCase
         $m = self::rulesSnapshot([['id' => 'ver', 'action' => 'block', 'conds' => [['f' => 'path', 'op' => 'matches', 'v' => '^/api/(?<ver>v\d+)/']]]]);
         self::assertSame('ver', $m->match(new MatchInput(path: '/api/v2/dump'))->rule);
         self::assertNull($m->match(new MatchInput(path: "/api/v\xd9\xa3/dump"))->rule);   // \d is ASCII, as JS reads it
-        $m2 = self::rulesSnapshot([['id' => 'any', 'action' => 'block', 'conds' => [['f' => 'ua', 'op' => 'matches', 'v' => '^a[^]b\cJ$']]]]);
-        self::assertSame('any', $m2->match(new MatchInput(ua: "a\nb\n"))->rule);
+        $m2 = self::rulesSnapshot([['id' => 'any', 'action' => 'block', 'conds' => [['f' => 'ua', 'op' => 'matches', 'v' => '^a[^]b$']]]]);
+        self::assertSame('any', $m2->match(new MatchInput(ua: 'a b'))->rule);
         self::assertNull($m2->match(new MatchInput(ua: 'ab'))->rule);
     }
 
@@ -197,5 +198,80 @@ final class ParseTest extends TestCase
         self::assertSame(['y'], array_map(static fn ($r) => $r->id, $m->snap->rules));
         self::assertSame('y', $m->match(new MatchInput(ua: 'curl/8'))->rule);
         self::assertNull($m->match(new MatchInput(ua: 'wget'))->rule);
+    }
+
+    /** @return list<array<string, mixed>> */
+    private static function mrule(string $id, string $action, string $f, ?string $name, string $rx): array
+    {
+        return [['id' => $id, 'action' => $action, 'conds' => [['f' => $f, 'op' => 'matches', 'v' => $rx] + ($name === null ? [] : ['name' => $name])]]];
+    }
+
+    public function testUnitsCountUtf16AndInvalidUtf8AsBytes(): void
+    {
+        self::assertSame(2048, Parser::units(str_repeat('é', 2048)));
+        self::assertSame(2048, Parser::units(str_repeat("\u{1F600}", 1024)));
+        self::assertSame(2050, Parser::units(str_repeat("\u{1F600}", 1025)));
+        self::assertSame(3, Parser::units("a\xff\xfe"));
+        self::assertSame(0, Parser::units(''));
+        self::assertTrue(Parser::overCap(str_repeat("\xff", 2049)));
+        self::assertFalse(Parser::overCap(str_repeat('é', 2048)));
+    }
+
+    public function testMatchesCapsInputFailingClosedForDenyAndMissForSkip(): void
+    {
+        $deny = self::rulesSnapshot([
+            ...self::mrule('u', 'warn', 'ua', null, '(Scrapy|python-requests)/[0-9]'),
+            ...self::mrule('h', 'challenge', 'header', 'x-v', '^1\.[0-2]\.'),
+            ...self::mrule('p', 'block', 'path', null, '^/api/v[0-9]+/dump$'),
+        ]);
+        $ua = static fn (string $v) => $deny->match(new MatchInput(ua: $v))->rule;
+        $hd = static fn (string $v) => $deny->match(new MatchInput(header: static fn (string $n): string => $v))->rule;
+        $pa = static fn (string $v) => $deny->match(new MatchInput(path: $v))->rule;
+        self::assertNull($ua(str_repeat('a', 2048)));
+        self::assertSame('u', $ua(str_repeat('a', 2049)));
+        self::assertNull($ua(str_repeat('é', 2048)));
+        self::assertNull($ua(str_repeat("\u{1F600}", 1024)));
+        self::assertSame('u', $ua(str_repeat("\u{1F600}", 1025)));
+        self::assertNull($ua('Mozilla/5.0 ' . str_repeat('a', 2036) . "\t"));
+        self::assertSame('h', $hd(str_repeat('9', 2049)));
+        self::assertNull($hd(str_repeat('9', 2048)));
+        self::assertNull($pa('/x/' . str_repeat('a', 2045)));
+        self::assertSame('p', $pa('/x/' . str_repeat('a', 2046)));
+        self::assertSame('p', $pa('/' . str_repeat('%61', 700)));
+        self::assertNull($pa('/x?' . str_repeat('q', 3000)));
+
+        $skip = self::rulesSnapshot([
+            ...self::mrule('s', 'skip', 'ua', null, '^uptime-probe/[0-9]'),
+            ...self::mrule('sp', 'skip', 'path', null, '^/static-mirror/'),
+            ...self::mrule('e', 'warn', 'ua', null, 'Scrapy'),
+            ...self::mrule('c', 'block', 'path', null, '^/api/v[0-9]+/dump$'),
+        ]);
+        $up = 'uptime-probe/1 ';
+        $sm = '/static-mirror/';
+        self::assertSame('s', $skip->match(new MatchInput(ua: $up . str_repeat('a', 2033)))->rule);
+        self::assertSame('e', $skip->match(new MatchInput(ua: $up . str_repeat('a', 2034)))->rule);
+        self::assertSame('sp', $skip->match(new MatchInput(path: $sm . str_repeat('a', 2033)))->rule);
+        self::assertSame('c', $skip->match(new MatchInput(path: $sm . str_repeat('a', 2034)))->rule);
+        self::assertSame('sp', $skip->match(new MatchInput(path: $sm . str_repeat('%61', 700)))->rule);
+        self::assertSame('c', $skip->match(new MatchInput(path: $sm . str_repeat('./', 1100) . 'x'))->rule);
+    }
+
+    public function testControlCharsAreStrippedFromUaAndHeaderForMatchesOnly(): void
+    {
+        $m = self::rulesSnapshot([
+            ...self::mrule('e', 'warn', 'ua', null, '(Scrapy|python-requests)/[0-9]'),
+            ...self::mrule('s', 'skip', 'header', 'x-p', '^partner-[a-z]+$'),
+            ['id' => 'k', 'action' => 'block', 'conds' => [['f' => 'ua', 'op' => 'contains', 'v' => 'curl/']]],
+            ...self::mrule('c', 'block', 'path', null, '^/api/v[0-9]+/dump$'),
+        ]);
+        self::assertSame('e', $m->match(new MatchInput(ua: "python-requests\x00/2.32.0"))->rule);
+        self::assertSame('e', $m->match(new MatchInput(ua: "Scrapy\t/2.11"))->rule);
+        self::assertSame('e', $m->match(new MatchInput(ua: "python-requests/\x7f2"))->rule);
+        self::assertNull($m->match(new MatchInput(ua: "cu\x00rl/8.4.0"))->rule);
+        self::assertSame('s', $m->match(new MatchInput(header: static fn (string $n): string => "partner-acme\n"))->rule);
+        self::assertNull($m->match(new MatchInput(path: "/api/v2/dump\n"))->rule);
+        self::assertNull($m->match(new MatchInput(path: '/api/v2/dump%0A'))->rule);
+        self::assertSame('c', $m->match(new MatchInput(path: '/api/v2/dump'))->rule);
+        self::assertSame(['/a%0a%7f', '/a%0a%7f', '/a%0a%7f'], Path::forms("/a\n\x7f"));
     }
 }

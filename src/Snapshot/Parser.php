@@ -31,7 +31,34 @@ namespace Camada\Snapshot;
 final class Parser
 {
     private const FORMATS = [0x424C4B33 => 3, 0x424C4B34 => 4, 0x424C4B35 => 5];
+    /** Longest ua/header/path value a `matches` regex reads, in UTF-16 code units. */
+    public const MAX_MATCH_INPUT = 2048;
     private const ACTIONS = ['skip' => true, 'block' => true, 'challenge' => true, 'warn' => true];
+
+    /** Deletes every [\x00-\x1f\x7f] byte (ASCII, so never inside a multi-byte UTF-8 sequence). */
+    public static function stripControls(string $v): string
+    {
+        return preg_replace('/[\x00-\x1f\x7f]/', '', $v) ?? $v;
+    }
+
+    /**
+     * Length in UTF-16 code units, the unit edge counts: valid UTF-8 is chars plus one per
+     * astral char; bytes that are not valid UTF-8 count one each. No mbstring.
+     */
+    public static function units(string $v): int
+    {
+        $n = strlen($v);
+        if ($n === 0 || preg_match('//u', $v) !== 1) {
+            return $n;
+        }
+        return $n - (int) preg_match_all('/[\x80-\xBF]/', $v) + (int) preg_match_all('/[\xF0-\xF7]/', $v);
+    }
+
+    /** Over the cap? A value of 2048 bytes or fewer cannot exceed 2048 units, so it skips the count. */
+    public static function overCap(string $v): bool
+    {
+        return strlen($v) > self::MAX_MATCH_INPUT && self::units($v) > self::MAX_MATCH_INPUT;
+    }
 
     /**
      * Parses a BLK container + meta into a Snapshot. Throws on a malformed container — callers
@@ -257,7 +284,7 @@ final class Parser
         if ($f === 'path') {   // every path op reads the canonical forms (§D3 "Path matching"), never fieldValue
             $raw = $c['v'] ?? null;
             $vals = is_array($raw) ? array_map(static fn (mixed $x): string => is_scalar($x) ? (string) $x : '', array_values($raw)) : [is_scalar($raw) ? (string) $raw : ''];
-            $pred = Path::pred($op, $vals);
+            $pred = Path::pred($op, $vals, $deny);
             return static fn (RuleRequest $r): bool => Path::hit($pred, $r->paths, $deny);
         }
         $negate = $op === 'is_not' || $op === 'not_in';
@@ -297,9 +324,17 @@ final class Parser
         $values = is_array($raw) ? array_map(static fn (mixed $x): string => is_scalar($x) ? (string) $x : '', array_values($raw)) : [is_scalar($raw) ? (string) $raw : ''];
         if ($op === 'matches') {
             $rx = Regex::compile($values[0] ?? '');
-            return static function (RuleRequest $r) use ($read, $rx): bool {
+            $strip = $f === 'ua' || $f === 'header';
+            return static function (RuleRequest $r) use ($read, $rx, $strip, $deny): bool {
                 $v = $read($r);
-                return $v !== null && Regex::test($rx, $v);
+                if ($v === null || $rx === null) {
+                    return false;
+                }
+                if ($strip) {
+                    $v = self::stripControls($v);
+                }
+                // over the cap the regex never runs: a deny rule hits, a skip rule misses (never truncate)
+                return self::overCap($v) ? $deny : Regex::test($rx, $v);
             };
         }
         if ($op === 'contains') {
