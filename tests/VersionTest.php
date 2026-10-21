@@ -14,7 +14,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class VersionTest extends TestCase
 {
-    // edge-analyst src/freshness.js sdkId: SDK_RE with a name from SDK_NAMES (exact case); anything else is silently dropped from sdk_versions.
+    // edge-analyst src/freshness.js sdkId (SDK_RE, exact-case SDK_NAMES): anything else is dropped.
     private const ANALYST_SDK_RE = '~^@camada/php/\d+\.\d+\.\d+[A-Za-z0-9.-]*$~';
 
     public function testSdkIdIsTheFamilyWireIdentity(): void
