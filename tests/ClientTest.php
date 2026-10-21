@@ -8,6 +8,7 @@ use Camada\Guarded;
 use Camada\Runtime\Cache;
 use Camada\Runtime\Lock;
 use Camada\Snapshot\Client;
+use Camada\Snapshot\FileWords;
 use Camada\Snapshot\MatchInput;
 use Camada\Transport\HttpRequest;
 use Camada\Transport\HttpResponse;
@@ -114,6 +115,30 @@ final class ClientTest extends TestCase
         self::assertTrue($c->verdict(new MatchInput(ip: FakeAnalyst::BLOCKED_IP))->block);
         self::assertFileDoesNotExist($this->dir . '/snapshot.bin');
         self::assertFileDoesNotExist($this->dir . '/snapshot.meta.json');
+    }
+
+    public function testAMissingFrameUnderALoadedStateIsStale(): void
+    {
+        $a = new FakeAnalyst();
+        $c = $this->client($a);
+        $c->refresh();
+        self::assertFalse($this->client($a)->stale());
+        unlink($this->dir . '/snapshot.frame');
+        $c = $this->client($a);
+        self::assertTrue($c->stale());
+        self::assertTrue($c->due());
+        $c->refresh(false);
+        self::assertTrue($c->verdict(new MatchInput(ip: FakeAnalyst::BLOCKED_IP))->block);
+    }
+
+    public function testAHugeMetaLenIsBoundedByTheFileSize(): void
+    {
+        @mkdir($this->dir, 0777, true);
+        $f = $this->dir . '/huge.frame';
+        file_put_contents($f, pack('V', 0xFFFFFFF0) . 'abc');
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('truncated snapshot frame');
+        FileWords::openFrame($f);
     }
 
     public function testLoadsAndEnforcesWithTheContractHeaders(): void
