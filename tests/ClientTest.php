@@ -82,22 +82,18 @@ final class ClientTest extends TestCase
         $this->client($a)->refresh();
         $a->container = 'v5';   // publish 2: new etag, carries custom rules in its meta
         $seen = null;
-        $probed = false;
-        MidLoad::$afterRenameName = 'snapshot.frame';
-        MidLoad::$afterRename = function () use ($a, &$seen, &$probed): void {
-            $probed = true;
+        MidLoad::$afterFrame = function () use ($a, &$seen): void {
             $seen = $this->client($a)->verdict(new MatchInput(ip: FakeAnalyst::ALLOWED_IP));
         };
         $prev = ini_set('error_log', $this->dir . '/error.log');
         try {
             $this->client($a)->refresh();
         } finally {
-            MidLoad::$afterRename = null;
+            MidLoad::$afterFrame = null;
             ini_set('error_log', $prev === false ? '' : $prev);
         }
-        self::assertTrue($probed);
         self::assertFileDoesNotExist($this->dir . '/error.log');   // nothing logged: no mismatched parse
-        self::assertNotNull($seen);
+        self::assertNotNull($seen);   // the probe ran
         self::assertTrue($seen->allowed);
         // the allow-listed ip hits publish 2's rule over its own container. v3 meta + v5 container is the
         // mismatch: the allow side still hits but no rule exists, so it reads 'ip4' (the v3 pair alone is a block)
