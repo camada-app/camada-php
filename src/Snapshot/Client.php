@@ -220,6 +220,10 @@ final class Client
             $s['loaded_at'] = $this->now();
             $this->cache->writeJson(self::STATE, $s);
         }
+        if ($res->status === 204) {   // only once state.json says none: a worker still reading the old state must find the container it names
+            $this->cache->unlink(self::BIN);
+            $this->cache->unlink(self::META);
+        }
     }
 
     /**
@@ -233,9 +237,7 @@ final class Client
         if ($res->status === 304) {
             return;
         }
-        if ($res->status === 204) {   // no snapshot published: enforce nothing
-            $this->cache->unlink(self::BIN);
-            $this->cache->unlink(self::META);
+        if ($res->status === 204) {   // no snapshot published: enforce nothing (load() clears the container after the state write)
             $s['etag'] = null;
             $s['version'] = null;
             $s['none'] = true;
