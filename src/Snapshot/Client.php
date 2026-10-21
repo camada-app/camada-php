@@ -243,28 +243,14 @@ final class Client
             return;
         }
         $body = $res->body;
-        if (strlen($body) < 4) {
-            throw new \RuntimeException('camada: truncated snapshot frame');
-        }
-        /** @var array{1: int} $len */
-        $len = unpack('V', $body);
-        $metaLen = $len[1];
-        if (4 + $metaLen > strlen($body)) {
-            throw new \RuntimeException('camada: truncated snapshot frame');
-        }
-        $meta = json_decode(substr($body, 4, $metaLen), true, 512, JSON_THROW_ON_ERROR);
-        if (!is_array($meta)) {
-            throw new \RuntimeException('camada: snapshot meta is not an object');
-        }
-        /** @var array<string, mixed> $meta */
+        [$meta, $offset] = FileWords::frameMeta($body);
         $etag = $res->headers['etag'] ?? null;
         // The server ships the v3, v4 and v5 bodies of one publish under the SAME meta.version and
         // different etags, so version alone cannot say "nothing changed".
         if (($s['none'] ?? false) !== true && $etag !== null && ($s['etag'] ?? null) === $etag && ($s['version'] ?? null) === ($meta['version'] ?? null) && $this->cache->exists(self::FRAME)) {
             return;
         }
-        $blk = substr($body, 4 + $metaLen);
-        Parser::parse(new MemoryWords($blk), $meta);   // throws on corrupt data -> caught by refresh(), previous kept
+        Parser::parse(new MemoryWords(substr($body, $offset)), $meta);   // throws on corrupt data -> caught by refresh(), previous kept
         $this->cache->write(self::FRAME, $body);   // one atomic rename: a reader gets this publish's meta and container, or the previous pair
         $this->cache->unlink('snapshot.bin');   // the pre-frame layout
         $this->cache->unlink('snapshot.meta.json');
