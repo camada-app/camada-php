@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace Camada\Snapshot;
 
 /**
- * One fopen('rb') handle over the cached container: fseek(4 * i) + unpack('V', fread(4)), with
+ * One fopen('rb') handle over the cached snapshot.frame (the container starts $offset bytes in, after
+ * the meta header; every seek adds it): fseek(4 * i) + unpack('V', fread(4)), with
  * a small read cache so a lookup that revisits a word (the binary searches do) pays once. The
  * handle pins the inode: a concurrent refresh renames a new file into place and this reader
  * keeps seeing the old one whole — never a torn container.
@@ -14,12 +15,42 @@ final class FileWords implements WordSource
 {
     /** @var array<int, int> */
     private array $cache = [];
-    private readonly int $length;
+    private int $offset = 0;   // bytes before the container: 0 for a bare one, 4 + meta-length in a frame
+    private int $length;
 
     /** @param resource $fh */
-    private function __construct(private $fh, int $bytes)
+    private function __construct(private $fh, private readonly int $bytes)
     {
         $this->length = intdiv($bytes, 4);
+    }
+
+    /**
+     * The meta and the container of one snapshot.frame, [u32 LE meta-len][meta JSON][BLK], both
+     * read through the one handle so they are one inode: a publish cannot land between them.
+     *
+     * @return array{array<string, mixed>, self}
+     */
+    public static function openFrame(string $path): array
+    {
+        $words = self::open($path);
+        $hdr = fread($words->fh, 4);
+        if ($hdr === false || strlen($hdr) !== 4) {
+            throw new \RuntimeException('camada: truncated snapshot frame');
+        }
+        /** @var array{1: int} $len */
+        $len = unpack('V', $hdr);
+        $raw = $len[1] > 0 ? fread($words->fh, $len[1]) : '';
+        if ($raw === false || strlen($raw) !== $len[1]) {
+            throw new \RuntimeException('camada: truncated snapshot frame');
+        }
+        $meta = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+        if (!is_array($meta)) {
+            throw new \RuntimeException('camada: snapshot meta is not an object');
+        }
+        /** @var array<string, mixed> $meta */
+        $words->offset = 4 + $len[1];
+        $words->length = intdiv($words->bytes - $words->offset, 4);
+        return [$meta, $words];
     }
 
     public static function open(string $path): self
@@ -47,7 +78,7 @@ final class FileWords implements WordSource
         if (count($this->cache) > 4096) {
             $this->cache = [];   // bounded: one request touches a few dozen words, a long-lived process must not grow forever
         }
-        fseek($this->fh, 4 * $i);
+        fseek($this->fh, $this->offset + 4 * $i);
         $b = fread($this->fh, 4);
         if ($b === false || strlen($b) !== 4) {
             throw new \RuntimeException('camada: short read on snapshot');
@@ -67,7 +98,7 @@ final class FileWords implements WordSource
         if ($length <= 0 || $offset < 0 || $offset + $length > $this->length) {
             return [];
         }
-        fseek($this->fh, 4 * $offset);
+        fseek($this->fh, $this->offset + 4 * $offset);
         $b = fread($this->fh, 4 * $length);
         if ($b === false || strlen($b) !== 4 * $length) {
             throw new \RuntimeException('camada: short read on snapshot');
