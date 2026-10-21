@@ -24,16 +24,16 @@ use Camada\Transport\TransportInterface;
  * snapshot; cold = fail open.
  *
  * File-backed: state.json {etag, version, loaded_at, refresh_s, config, none} steers every
- * worker, snapshot.bin is the raw container the matcher seeks into, snapshot.meta.json rides
- * beside it. The request path only reads; refresh() is the post-response phase's job.
+ * worker, snapshot.frame is the 200 body as served (meta + BLK container in ONE file, so they
+ * always come from one publish) and the matcher seeks into it. The request path only reads;
+ * refresh() is the post-response phase's job.
  *
  * @phpstan-import-type RemoteConfig from Config
  */
 final class Client
 {
     private const STATE = 'state.json';
-    private const BIN = 'snapshot.bin';
-    private const META = 'snapshot.meta.json';
+    private const FRAME = 'snapshot.frame';
     private const LOCK = 'refresh.lock';
 
     /** @var array<string, mixed>|null */
@@ -119,14 +119,20 @@ final class Client
     /**
      * 0.9 x refresh so a poll landing at ~refresh-ε still counts; a full-interval comparison
      * makes every other one a no-op (effective cadence 2x). Cold (no state) is stale, and so is a
-     * loaded_at in the future (the wall clock stepped back).
+     * loaded_at in the future (the wall clock stepped back), and so is a fresh state holding rules
+     * whose snapshot.frame is gone (an upgraded cache dir would fail open until the next poll).
      */
     public function stale(): bool
     {
         $loaded = $this->state()['loaded_at'] ?? 0;
         $loaded = is_int($loaded) || is_float($loaded) ? (float) $loaded : 0.0;
         $now = $this->now();
-        return $loaded <= 0 || $loaded > $now || $now - $loaded > $this->refreshS() * 0.9;
+        if ($loaded <= 0 || $loaded > $now || $now - $loaded > $this->refreshS() * 0.9) {
+            return true;
+        }
+        $s = $this->state();
+        // rules but no frame; no etag (a corrupt first load) keeps the poll cadence
+        return is_string($s['etag'] ?? null) && $s['etag'] !== '' && ($s['none'] ?? false) !== true && !$this->cache->exists(self::FRAME);
     }
 
     /**
@@ -178,7 +184,7 @@ final class Client
     {
         $s = $this->state() ?? [];
         $headers = ['authorization' => "Bearer {$this->token}", 'accept-encoding' => 'gzip'];
-        if (is_string($s['etag'] ?? null) && $s['etag'] !== '') {
+        if (is_string($s['etag'] ?? null) && $s['etag'] !== '' && $this->cache->exists(self::FRAME)) {   // no frame (a pre-frame cache dir): ask for the full 200, not a 304 forever
             $headers['if-none-match'] = $s['etag'];
         }
         if ($this->sdk !== null) {
@@ -212,17 +218,19 @@ final class Client
         unset($s['next_poll_at']);
         // loaded_at is stamped last, in the one state.json write (even when the body turns out corrupt,
         // so it is retried per poll cadence, not per request): "not cold" is what every worker reads as
-        // "rules in place", so it must not be on disk before snapshot.bin and its meta are.
+        // "rules in place", so it must not be on disk before snapshot.frame is.
         try {
             $this->readConfig($s, $res->headers['x-camada-config'] ?? null);
             $this->publish($res, $s);
         } finally {
+            if (($s['none'] ?? false) !== true && !$this->cache->exists(self::FRAME)) {
+                unset($s['etag']);   // no frame = no rules to revalidate; keeps stale() from re-polling per request
+            }
             $s['loaded_at'] = $this->now();
             $this->cache->writeJson(self::STATE, $s);
         }
         if ($res->status === 204) {   // only after state.json says none: a worker that then finds the container gone already sees none on disk
-            $this->cache->unlink(self::BIN);
-            $this->cache->unlink(self::META);
+            $this->cache->unlink(self::FRAME);
         }
     }
 
@@ -244,30 +252,17 @@ final class Client
             return;
         }
         $body = $res->body;
-        if (strlen($body) < 4) {
-            throw new \RuntimeException('camada: truncated snapshot frame');
-        }
-        /** @var array{1: int} $len */
-        $len = unpack('V', $body);
-        $metaLen = $len[1];
-        if (4 + $metaLen > strlen($body)) {
-            throw new \RuntimeException('camada: truncated snapshot frame');
-        }
-        $meta = json_decode(substr($body, 4, $metaLen), true, 512, JSON_THROW_ON_ERROR);
-        if (!is_array($meta)) {
-            throw new \RuntimeException('camada: snapshot meta is not an object');
-        }
-        /** @var array<string, mixed> $meta */
+        [$meta, $offset] = FileWords::frameMeta($body);
         $etag = $res->headers['etag'] ?? null;
         // The server ships the v3, v4 and v5 bodies of one publish under the SAME meta.version and
         // different etags, so version alone cannot say "nothing changed".
-        if (($s['none'] ?? false) !== true && $etag !== null && ($s['etag'] ?? null) === $etag && ($s['version'] ?? null) === ($meta['version'] ?? null) && $this->cache->exists(self::BIN)) {
+        if (($s['none'] ?? false) !== true && $etag !== null && ($s['etag'] ?? null) === $etag && ($s['version'] ?? null) === ($meta['version'] ?? null) && $this->cache->exists(self::FRAME)) {
             return;
         }
-        $blk = substr($body, 4 + $metaLen);
-        Parser::parse(new MemoryWords($blk), $meta);   // throws on corrupt data -> caught by refresh(), previous kept
-        $this->cache->write(self::BIN, $blk);
-        $this->cache->writeJson(self::META, $meta);
+        Parser::parse(new MemoryWords(substr($body, $offset)), $meta);   // throws on corrupt data -> caught by refresh(), previous kept
+        $this->cache->write(self::FRAME, $body);   // one atomic rename: a reader gets this publish's meta and container, or the previous pair
+        $this->cache->unlink('snapshot.bin');   // the pre-frame layout
+        $this->cache->unlink('snapshot.meta.json');
         $s['etag'] = $etag;
         $s['version'] = $meta['version'] ?? null;
         $s['none'] = false;
@@ -307,7 +302,7 @@ final class Client
     }
 
     /**
-     * The matcher over the cached container: opened once per (etag, version), re-opened when
+     * The matcher over the cached frame: opened once per (etag, version), re-opened when
      * another worker's refresh moved the state on. The open handle pins the old inode meanwhile.
      *
      * @param array<string, mixed> $s
@@ -319,8 +314,8 @@ final class Client
             return $this->matcher;
         }
         try {
-            $meta = $this->cache->readJson(self::META) ?? [];
-            $this->matcher = new Matcher(Parser::parse(FileWords::open($this->cache->path(self::BIN)), $meta));
+            [$meta, $words] = FileWords::openFrame($this->cache->path(self::FRAME));   // one handle: meta and container from one inode
+            $this->matcher = new Matcher(Parser::parse($words, $meta));
             $this->matcherKey = $key === false ? null : $key;
             return $this->matcher;
         } catch (\Throwable $err) {   // a container that vanished or will not parse: fail open, retried next poll

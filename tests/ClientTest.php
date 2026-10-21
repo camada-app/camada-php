@@ -8,6 +8,7 @@ use Camada\Guarded;
 use Camada\Runtime\Cache;
 use Camada\Runtime\Lock;
 use Camada\Snapshot\Client;
+use Camada\Snapshot\FileWords;
 use Camada\Snapshot\MatchInput;
 use Camada\Transport\HttpRequest;
 use Camada\Transport\HttpResponse;
@@ -58,7 +59,7 @@ final class ClientTest extends TestCase
     public function testStaysColdUntilTheFirstLoadIsFullyPublished(): void
     {
         // every worker reads "not cold" as "rules in place": one that reads the cache while the first
-        // load is still mid-flight must see cold, not a state.json whose snapshot.bin is not there yet
+        // load is still mid-flight must see cold, not a state.json whose snapshot.frame is not there yet
         $a = new FakeAnalyst();
         $seen = 'probe never ran';
         MidLoad::$probe = function () use ($a, &$seen): void {
@@ -71,6 +72,92 @@ final class ClientTest extends TestCase
         }
         self::assertSame('cold', $seen);
         self::assertTrue($this->client($a)->verdict(new MatchInput(ip: FakeAnalyst::BLOCKED_IP))->block);
+    }
+
+    public function testAWorkerMidRefreshNeverPairsTheNewContainerWithTheOldMeta(): void
+    {
+        // worker A holds publish 1; worker B (no cached matcher, still on the old state.json) enforces in the
+        // gap right after publish 2's file is renamed into place and before state.json moves on: it must get
+        // one publish's meta AND container, never the new container under the old meta (a parse error, fail open)
+        $a = new FakeAnalyst();
+        $this->client($a)->refresh();
+        $a->container = 'v5';   // publish 2: new etag, carries custom rules in its meta
+        $seen = null;
+        MidLoad::$afterFrame = function () use ($a, &$seen): void {
+            $seen = $this->client($a)->verdict(new MatchInput(ip: FakeAnalyst::ALLOWED_IP));
+        };
+        $prev = ini_set('error_log', $this->dir . '/error.log');
+        try {
+            $this->client($a)->refresh();
+        } finally {
+            MidLoad::$afterFrame = null;
+            ini_set('error_log', $prev === false ? '' : $prev);
+        }
+        self::assertFileDoesNotExist($this->dir . '/error.log');   // nothing logged: no mismatched parse
+        self::assertNotNull($seen);   // the probe ran
+        self::assertTrue($seen->allowed);
+        // the allow-listed ip hits publish 2's rule over its own container. v3 meta + v5 container is the
+        // mismatch: the allow side still hits but no rule exists, so it reads 'ip4' (the v3 pair alone is a block)
+        self::assertSame('rule', $seen->reason);
+    }
+
+    public function testACacheFromBeforeTheFrameLayoutRefetchesInFull(): void
+    {
+        // state.json carries an etag but there is no snapshot.frame: if-none-match would 304 forever
+        $a = new FakeAnalyst();
+        $this->client($a)->refresh();
+        unlink($this->dir . '/snapshot.frame');
+        file_put_contents($this->dir . '/snapshot.bin', 'old');
+        file_put_contents($this->dir . '/snapshot.meta.json', '{}');
+        $c = $this->client($a);
+        $c->refresh();
+        self::assertArrayNotHasKey('if-none-match', $a->snapshotRequests[1]->headers);
+        self::assertTrue($c->verdict(new MatchInput(ip: FakeAnalyst::BLOCKED_IP))->block);
+        self::assertFileDoesNotExist($this->dir . '/snapshot.bin');
+        self::assertFileDoesNotExist($this->dir . '/snapshot.meta.json');
+    }
+
+    public function testAMissingFrameUnderALoadedStateIsStale(): void
+    {
+        $a = new FakeAnalyst();
+        $c = $this->client($a);
+        $c->refresh();
+        self::assertFalse($this->client($a)->stale());
+        unlink($this->dir . '/snapshot.frame');
+        $c = $this->client($a);
+        self::assertTrue($c->stale());
+        self::assertTrue($c->due());
+        $c->refresh(false);
+        self::assertTrue($c->verdict(new MatchInput(ip: FakeAnalyst::BLOCKED_IP))->block);
+    }
+
+    public function testARefetchThatLeavesNoFrameKeepsThePollCadence(): void
+    {
+        $a = new FakeAnalyst();
+        $this->client($a)->refresh();
+        unlink($this->dir . '/snapshot.frame');
+        $a->tamper = static fn (HttpRequest $req, HttpResponse $r): HttpResponse => new HttpResponse(200, ['etag' => '"other"'] + $r->headers, "\x05\x00\x00\x00junk!" . str_repeat("\x00", 10));
+        $before = count($a->snapshotRequests);
+        $prev = ini_set('error_log', $this->dir . '/error.log');
+        try {
+            for ($i = 0; $i < 5; $i++) {
+                $this->client($a)->refresh(false);
+            }
+        } finally {
+            ini_set('error_log', $prev === false ? '' : $prev);
+        }
+        self::assertSame($before + 1, count($a->snapshotRequests));
+        self::assertFalse($this->client($a)->stale());
+    }
+
+    public function testAHugeMetaLenIsBoundedByTheFileSize(): void
+    {
+        @mkdir($this->dir, 0777, true);
+        $f = $this->dir . '/huge.frame';
+        file_put_contents($f, pack('V', 0xFFFFFFF0) . 'abc');
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('truncated snapshot frame');
+        FileWords::openFrame($f);
     }
 
     public function testLoadsAndEnforcesWithTheContractHeaders(): void
@@ -87,9 +174,8 @@ final class ClientTest extends TestCase
         self::assertSame('gzip', $req->headers['accept-encoding']);
         self::assertArrayNotHasKey('if-none-match', $req->headers);
         self::assertSame($a->config, $c->config());
-        self::assertFileExists($this->dir . '/snapshot.bin');
-        self::assertFileExists($this->dir . '/snapshot.meta.json');
-        self::assertSame($a->binary(), file_get_contents($this->dir . '/snapshot.bin'));   // the raw BLK container only
+        self::assertFileExists($this->dir . '/snapshot.frame');
+        self::assertSame(FakeAnalyst::frame($a->meta(), $a->binary()), file_get_contents($this->dir . '/snapshot.frame'));   // the 200 body as served
     }
 
     public function testAFreshClientOverTheSameCacheReadsWhatAnotherWrote(): void
@@ -126,7 +212,7 @@ final class ClientTest extends TestCase
         $v = $c->verdict(new MatchInput(ip: FakeAnalyst::BLOCKED_IP));
         self::assertNull($v->reason);
         self::assertFalse($v->block);
-        self::assertFileDoesNotExist($this->dir . '/snapshot.bin');
+        self::assertFileDoesNotExist($this->dir . '/snapshot.frame');
         self::assertFalse($c->stale());
     }
 
@@ -159,7 +245,7 @@ final class ClientTest extends TestCase
             ini_set('error_log', $prev === false ? '' : $prev);
         }
         self::assertTrue($c->verdict(new MatchInput(ip: FakeAnalyst::BLOCKED_IP))->block);
-        self::assertSame($a->binary(), file_get_contents($this->dir . '/snapshot.bin'));
+        self::assertSame(FakeAnalyst::frame($a->meta(), $a->binary()), file_get_contents($this->dir . '/snapshot.frame'));
     }
 
     public function testSameVersionNewEtagReparses(): void

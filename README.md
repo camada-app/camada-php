@@ -76,8 +76,7 @@ run become one runtime on disk that every worker of every SAPI shares:
 
 ```
 $CAMADA_CACHE_DIR (default: <system temp dir>/camada-<16 hex of sha256(snap token)>)
-  snapshot.bin        the raw BLK container, seeked into per request (never parsed whole)
-  snapshot.meta.json  its meta (rules, sides, version)
+  snapshot.frame      the 200 frame as served: meta + BLK container in one file, so they always come from one publish; seeked into per request
   state.json          {etag, version, loaded_at, refresh_s, config, none, next_poll_at}
   events.ndjson       the spool, one wire event per line       events.lock / events.count / flush.json
   refresh.lock        one refresh in flight across workers      log.stamp: one log line a minute

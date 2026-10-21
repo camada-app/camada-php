@@ -146,7 +146,7 @@ final class EngineTest extends TestCase
         self::assertCount(1, $this->a->snapshotRequests);
         self::assertSame(403, $h(new Call('GET', '/', peer: FakeAnalyst::BLOCKED_IP))->status);
         self::assertCount(1, $this->a->snapshotRequests);   // fresh: no second poll
-        self::assertFileExists($h->engine->snap?->cacheDir() . '/snapshot.bin');
+        self::assertFileExists($h->engine->snap?->cacheDir() . '/snapshot.frame');
     }
 
     public function testHonoursTheAllowSideOverAWiderBlock(): void
