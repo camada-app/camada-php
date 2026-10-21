@@ -223,6 +223,9 @@ final class Client
             $this->readConfig($s, $res->headers['x-camada-config'] ?? null);
             $this->publish($res, $s);
         } finally {
+            if (($s['none'] ?? false) !== true && !$this->cache->exists(self::FRAME)) {
+                unset($s['etag']);   // no frame = no rules to revalidate; keeps stale() from re-polling per request
+            }
             $s['loaded_at'] = $this->now();
             $this->cache->writeJson(self::STATE, $s);
         }
