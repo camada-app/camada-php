@@ -220,7 +220,7 @@ final class Client
             $s['loaded_at'] = $this->now();
             $this->cache->writeJson(self::STATE, $s);
         }
-        if ($res->status === 204) {   // only once state.json says none: a worker still reading the old state must find the container it names
+        if ($res->status === 204) {   // only after state.json says none: a worker that then finds the container gone already sees none on disk
             $this->cache->unlink(self::BIN);
             $this->cache->unlink(self::META);
         }
