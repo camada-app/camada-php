@@ -119,14 +119,20 @@ final class Client
     /**
      * 0.9 x refresh so a poll landing at ~refresh-ε still counts; a full-interval comparison
      * makes every other one a no-op (effective cadence 2x). Cold (no state) is stale, and so is a
-     * loaded_at in the future (the wall clock stepped back).
+     * loaded_at in the future (the wall clock stepped back), and so is a fresh state holding rules
+     * whose snapshot.frame is gone (an upgraded cache dir would fail open until the next poll).
      */
     public function stale(): bool
     {
         $loaded = $this->state()['loaded_at'] ?? 0;
         $loaded = is_int($loaded) || is_float($loaded) ? (float) $loaded : 0.0;
         $now = $this->now();
-        return $loaded <= 0 || $loaded > $now || $now - $loaded > $this->refreshS() * 0.9;
+        if ($loaded <= 0 || $loaded > $now || $now - $loaded > $this->refreshS() * 0.9) {
+            return true;
+        }
+        $s = $this->state();
+        // rules but no frame; no etag (a corrupt first load) keeps the poll cadence
+        return is_string($s['etag'] ?? null) && $s['etag'] !== '' && ($s['none'] ?? false) !== true && !$this->cache->exists(self::FRAME);
     }
 
     /**
