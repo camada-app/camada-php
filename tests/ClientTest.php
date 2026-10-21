@@ -131,6 +131,25 @@ final class ClientTest extends TestCase
         self::assertTrue($c->verdict(new MatchInput(ip: FakeAnalyst::BLOCKED_IP))->block);
     }
 
+    public function testARefetchThatLeavesNoFrameKeepsThePollCadence(): void
+    {
+        $a = new FakeAnalyst();
+        $this->client($a)->refresh();
+        unlink($this->dir . '/snapshot.frame');
+        $a->tamper = static fn (HttpRequest $req, HttpResponse $r): HttpResponse => new HttpResponse(200, ['etag' => '"other"'] + $r->headers, "\x05\x00\x00\x00junk!" . str_repeat("\x00", 10));
+        $before = count($a->snapshotRequests);
+        $prev = ini_set('error_log', $this->dir . '/error.log');
+        try {
+            for ($i = 0; $i < 5; $i++) {
+                $this->client($a)->refresh(false);
+            }
+        } finally {
+            ini_set('error_log', $prev === false ? '' : $prev);
+        }
+        self::assertSame($before + 1, count($a->snapshotRequests));
+        self::assertFalse($this->client($a)->stale());
+    }
+
     public function testAHugeMetaLenIsBoundedByTheFileSize(): void
     {
         @mkdir($this->dir, 0777, true);
