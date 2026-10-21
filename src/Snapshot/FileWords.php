@@ -64,6 +64,9 @@ final class FileWords implements WordSource
             $hdr = (string) fread($fh, 4);
             /** @var array{1: int} $len */
             $len = strlen($hdr) === 4 ? unpack('V', $hdr) : [1 => 0];
+            if ($len[1] > $bytes - 4) {   // a corrupt meta-len must not reach fread's allocation
+                throw new \RuntimeException('camada: truncated snapshot frame');
+            }
             [$meta, $offset] = self::frameMeta($hdr . ($len[1] > 0 ? (string) fread($fh, $len[1]) : ''));
         } catch (\Throwable $err) {
             fclose($fh);
