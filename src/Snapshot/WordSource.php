@@ -6,7 +6,7 @@ namespace Camada\Snapshot;
 
 /**
  * A BLK container read as little-endian uint32 words. Two implementations: the whole container
- * in a string (MemoryWords) and a seeking reader over the cached snapshot.bin (FileWords) — the
+ * in a string (MemoryWords) and a seeking reader over the cached snapshot.frame (FileWords) — the
  * per-request path never materialises the ~5 MB, it seeks the few dozen words a lookup touches.
  */
 interface WordSource

@@ -7,7 +7,7 @@ namespace Camada\Runtime;
 /**
  * The directory one PHP request hands the next. PHP has no long-lived process, so the snapshot,
  * the event spool and the poll state live on disk, shared by every worker of every SAPI:
- * snapshot.bin (the raw BLK container), snapshot.meta.json, state.json, refresh.lock,
+ * snapshot.frame (the 200 frame: meta + BLK container), state.json, refresh.lock,
  * events.ndjson, events.lock, events.count, flush.json, log.stamp. EVERY write is tmp + rename,
  * so a reader never sees a torn file.
  */
