@@ -206,6 +206,17 @@ final class SapiTest extends TestCase
         self::assertCount(2, array_filter($evs, static fn (array $e): bool => ($e['chs'] ?? null) === 1 && $e['st'] === 200 && !isset($e['blk'])));
     }
 
+    public function testASignalledResponseSurvivesTheAppsLateHeaders(): void
+    {
+        $app = $this->boot();
+        $ip = ['x-forwarded-for' => FakeAnalyst::CHALLENGED_IP, 'accept' => 'application/json'];
+        $late = $app->request('GET', '/api-late', $ip);   // the app sets cache-control: public after run()
+        self::assertSame(['1'], $late['headers']['x-camada-challenge']);
+        self::assertSame(['no-store'], $late['headers']['cache-control']);
+        $own = $app->request('GET', '/api-late', $ip + ['x-test-own-callback' => '1']);   // the app replaces the header callback
+        self::assertSame(['1'], $own['headers']['x-camada-challenge']);
+    }
+
     public function testTheChallengePageReplacesTheHostsCsp(): void
     {
         // camada-all-y38o: a strict app-wide policy would block the inline solver
