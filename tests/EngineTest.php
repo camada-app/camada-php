@@ -398,6 +398,19 @@ final class EngineTest extends TestCase
         self::assertSame([], array_intersect_key($rows[0], $forged));
     }
 
+    public function testStampsRtsFromTheRelayClockOverABrowserSuppliedOne(): void
+    {
+        $h = $this->host();
+        $before = (int) floor(microtime(true) * 1000);
+        $body = (string) json_encode(['rid' => 'r-1', 'rts' => 1]);
+        self::assertSame(204, $h(new Call('POST', '/_cam/fp', body: $body))->status);
+        $after = (int) ceil(microtime(true) * 1000);
+        [$row] = $this->events($h);
+        self::assertIsInt($row['rts']);
+        self::assertGreaterThanOrEqual($before, $row['rts']);
+        self::assertLessThanOrEqual($after, $row['rts']);
+    }
+
     public function testDropsJunkBodiesInsteadOfShippingThem(): void
     {
         $h = $this->host();
