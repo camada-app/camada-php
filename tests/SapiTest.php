@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Camada\Tests;
 
 use Camada\Challenge\Page;
+use Camada\Context;
 use Camada\Runtime\Cache;
 use Camada\Snapshot\Client;
 use PHPUnit\Framework\TestCase;
@@ -215,6 +216,20 @@ final class SapiTest extends TestCase
         self::assertSame(['no-store'], $late['headers']['cache-control']);
         $own = $app->request('GET', '/api-late', $ip + ['x-test-own-callback' => '1']);   // the app replaces the header callback
         self::assertSame(['1'], $own['headers']['x-camada-challenge']);
+    }
+
+    public function testASignalledResponseOverridesEveryCdnCacheHeader(): void
+    {
+        $app = $this->boot();
+        $r = $app->request('GET', '/api-cdn', ['accept' => 'application/json', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP]);
+        self::assertSame(['1'], $r['headers']['x-camada-challenge']);
+        foreach (Context::NO_STORE_HEADERS as $name) {
+            self::assertSame(['no-store'], $r['headers'][$name], $name);
+        }
+        $open = $app->request('GET', '/open-cdn', ['accept' => 'application/json']);   // not signalled: the app's headers stay
+        self::assertArrayNotHasKey('x-camada-challenge', $open['headers']);
+        self::assertSame(['public, max-age=60'], $open['headers']['cdn-cache-control']);
+        self::assertSame(['max-age=60'], $open['headers']['surrogate-control']);
     }
 
     public function testTheChallengePageReplacesTheHostsCsp(): void
