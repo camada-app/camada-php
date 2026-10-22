@@ -45,6 +45,15 @@ final class Sapi
         return self::pass($cam, $r);
     }
 
+    /** Per client: no-store replaces whatever the app set, on every CDN cache header too (header() replaces by name, any case). */
+    private static function stampSignal(): void
+    {
+        header('x-camada-challenge: 1');
+        foreach (Context::NO_STORE_HEADERS as $name) {
+            header($name . ': no-store');
+        }
+    }
+
     private static function pass(Camada $cam, Passed $p): Context
     {
         try {
@@ -59,13 +68,11 @@ final class Sapi
                 $ctx = $p->ctx;
                 if ($ctx->signalled) {
                     // already flagged (the common case): stamp now, so an app that registers its own header callback cannot drop it
-                    header('x-camada-challenge: 1');
-                    header('cache-control: no-store');
+                    self::stampSignal();
                 }
                 header_register_callback(static function () use ($ctx): void {
                     if ($ctx->signalled) {
-                        header('x-camada-challenge: 1');
-                        header('cache-control: no-store');   // per client: replaces whatever the app set
+                        self::stampSignal();
                     }
                 });
             }

@@ -91,9 +91,11 @@ final class Driver
             throw $e;
         }
         if ($ctx->signalled) {   // read once the app has run: serveChallenge() may have flagged it from inside
-            $appHeaders = array_values(array_filter($appHeaders, static fn (array $h): bool => strtolower($h[0]) !== 'cache-control'));
+            $appHeaders = array_values(array_filter($appHeaders, static fn (array $h): bool => !in_array(strtolower($h[0]), Context::NO_STORE_HEADERS, true)));
             $appHeaders[] = ['x-camada-challenge', '1'];
-            $appHeaders[] = ['cache-control', 'no-store'];
+            foreach (Context::NO_STORE_HEADERS as $name) {
+                $appHeaders[] = [$name, 'no-store'];
+            }
         }
         if ($r->rid !== null) {
             $appHeaders[] = ['x-rid', $r->rid];
