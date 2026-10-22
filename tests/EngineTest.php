@@ -6,7 +6,6 @@ namespace Camada\Tests;
 
 use Camada\Camada;
 use Camada\Challenge\Page;
-use Camada\Constants;
 use Camada\Context;
 use Camada\Guarded;
 use Camada\Req;
@@ -387,7 +386,7 @@ final class EngineTest extends TestCase
     public function testStripsSdkAttestedKeysFromTheBeaconBody(): void
     {
         $h = $this->host();
-        $forged = array_fill_keys(Constants::REQUEST_ROW_KEYS, 'forged');
+        $forged = array_fill_keys(['tlsx', 'ja4', 'asn', 'cc', 'sid', 'ns', 'st', 'dur', 'rt', 'blk', 'rl', 'wrn', 'chs', 'ch', 'et', 'uid'], 'forged');
         $body = (string) json_encode($forged + ['rid' => 'r-1', 'tz' => 'UTC']);
         self::assertSame(204, $h(new Call('POST', '/_cam/fp', body: $body))->status);
         $rows = $this->events($h);
