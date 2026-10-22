@@ -73,6 +73,13 @@ switch ($path) {
         header('content-type: application/json');
         echo '{"ok":true}';
         break;
+    case '/api-cdn':
+    case '/open-cdn':
+        header('content-type: application/json');
+        header('CDN-Cache-Control: public, max-age=60');
+        header('Surrogate-Control: max-age=60');
+        echo '{"ok":true}';
+        break;
     case '/echo':
         echo (string) file_get_contents('php://input');
         break;
