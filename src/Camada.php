@@ -349,7 +349,7 @@ class Camada
         if (!is_array($parsed) || ($parsed !== [] && array_is_list($parsed))) {
             return $answer;
         }
-        $this->spool?->push(array_merge($parsed, ['sig' => 1, 'ip' => $ip, 'tap' => Constants::TAP]));   // spread first: ip and tap are the server's word
+        $this->spool?->push(array_merge(array_diff_key($parsed, array_flip(Constants::REQUEST_ROW_KEYS)), ['sig' => 1, 'ip' => $ip, 'tap' => Constants::TAP]));   // spread first: ip and tap are the server's word
         return $answer;
     }
 

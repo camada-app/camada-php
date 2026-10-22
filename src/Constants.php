@@ -22,6 +22,9 @@ final class Constants
     public const SCRIPT_PATH = '/_cam/b.js';
     public const FP_PATH = '/_cam/fp';
     public const FP_MAX = 32 * 1024;               // matches the server's /fp cap: never accept what ingest will 413
+    // Row keys only the SDK can attest (TLS/network facts, outcome, session, track()). A beacon body is the
+    // visitor's, so these never ride a sig:1 row; the analyst joins them from the beacon's request row.
+    public const REQUEST_ROW_KEYS = ['tlsx', 'ja4', 'asn', 'cc', 'sid', 'ns', 'st', 'dur', 'rt', 'blk', 'rl', 'wrn', 'chs', 'ch', 'et', 'uid'];
     public const CHALLENGE_PATH = '/__camada/challenge';
     public const BODY_MAX = 4 * 1024;              // the verify form is ~120 bytes; anything larger is not ours
 
