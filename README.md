@@ -148,8 +148,8 @@ if ($cam->snap !== null) {                    // null when CAMADA_KEY is unset o
    A block answers `403 Forbidden` with `x-block-reason`, `x-block-version` and, when a rule
    decided, `x-block-rule`; its event ships with `blk` (and `rl`). A `warn` rule passes and stamps
    `wrn`; a `skip` rule passes with nothing stamped. Cold (no snapshot yet) passes: fail open.
-4. Challenge: a `challenge` verdict gets the self-contained proof-of-work page (or 403 JSON for a
-   non-HTML request). The page sends its own `Content-Security-Policy`, which allows only its
+4. Challenge: a `challenge` verdict gets the self-contained proof-of-work page (a non-HTML request
+   passes to the app with `x-camada-challenge: 1`, `cache-control: no-store` and a `chs: 1` event). The page sends its own `Content-Security-Policy`, which allows only its
    inline script and style by hash, and `Sapi::send()` drops any CSP or CSP-Report-Only the app set
    earlier, so a strict app-wide policy cannot block the solver; `POST /__camada/challenge` verifies the solution, sets `_cch` (bound to the
    ip, one hour) and 302s back. A request whose ip cannot be resolved is never challenged.
@@ -212,7 +212,9 @@ context). The event name is free-form; the analyst's app-context rules read this
 | `coupon_failed` | a promo/voucher code was rejected |
 
 A route you gate yourself: `$cam->serveChallenge($ctx)` returns the page as an `Answer` to hand
-to `Sapi::send()` (and then `return`) until the browser holds a valid `_cch`, then `null`.
+to `Sapi::send()` (and then `return`) for a page load until the browser holds a valid `_cch`, then `null`.
+A non-HTML request also gets `null`: it is signalled (`x-camada-challenge: 1`, `no-store`, `chs: 1`) and the app answers.
+A request flagged late (by `serveChallenge()` from inside the app) is stamped through `header_register_callback`, which an app callback registered later would replace.
 
 ## What this tap can see
 

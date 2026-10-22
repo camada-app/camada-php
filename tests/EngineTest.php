@@ -519,16 +519,57 @@ final class EngineTest extends TestCase
         self::assertSame('/account', $ev['p']);
     }
 
-    public function testAnswersJsonForANonHtmlRequest(): void
+    private const JSON = [['accept', 'application/json']];
+
+    public function testSignalsANonHtmlRequestUnderAChallengeAndPassesItToTheApp(): void
+    {
+        $this->a->container = 'v4';
+        $h = $this->host(handler: static fn (Context $c): array => [200, [['cache-control', 'public, max-age=600']], 'app body']);
+        $r = $h(new Call('GET', '/api', headers: self::JSON, peer: FakeAnalyst::CHALLENGED_IP));
+        self::assertSame(200, $r->status);
+        self::assertSame('app body', $r->body);
+        self::assertCount(1, $h->seen);
+        self::assertSame('1', $r->header('x-camada-challenge'));
+        self::assertSame('no-store', $r->header('cache-control'));
+        self::assertNotNull($r->header('x-rid'));
+        [$ev] = $this->events($h);
+        self::assertSame(1, $ev['chs']);
+        self::assertSame(200, $ev['st']);
+        self::assertArrayHasKey('dur', $ev);
+        self::assertArrayNotHasKey('blk', $ev);
+        // a fetch that asks for text/html is still not a page load
+        $r2 = $h(new Call('GET', '/api', headers: [['accept', 'text/html'], ['sec-fetch-dest', 'empty']], peer: FakeAnalyst::CHALLENGED_IP));
+        self::assertSame(200, $r2->status);
+        self::assertSame('1', $r2->header('x-camada-challenge'));
+    }
+
+    public function testASignalledEventShipsEvenWhenExcludedOrSampledOut(): void
+    {
+        $this->a->container = 'v4';
+        $this->a->config['exclude'] = ['/api'];
+        $this->a->config['sample'] = 0;
+        $h = $this->host();
+        $r = $h(new Call('GET', '/api/x', headers: self::JSON, peer: FakeAnalyst::CHALLENGED_IP));
+        self::assertSame('1', $r->header('x-camada-challenge'));
+        $evs = $this->events($h);
+        self::assertCount(1, $evs);
+        self::assertSame(1, $evs[0]['chs']);
+        self::assertSame(200, $evs[0]['st']);
+    }
+
+    public function testAValidCchMeansNoSignal(): void
     {
         $this->a->container = 'v4';
         $h = $this->host();
-        $r = $h(new Call('GET', '/api', headers: [['accept', 'application/json']], peer: FakeAnalyst::CHALLENGED_IP));
-        self::assertSame(403, $r->status);
-        self::assertSame('application/json', $r->header('content-type'));
-        self::assertSame(['error' => 'challenge_required'], json_decode($r->body, true));
-        $r2 = $h(new Call('GET', '/api', headers: [['accept', 'text/html'], ['sec-fetch-dest', 'empty']], peer: FakeAnalyst::CHALLENGED_IP));
-        self::assertSame('application/json', $r2->header('content-type'));
+        $nonce = self::nonceOf($h(new Call('GET', '/', headers: self::HTML, peer: FakeAnalyst::CHALLENGED_IP))->body);
+        $ok = $h(new Call('POST', '/__camada/challenge', body: "nonce={$nonce}&solution=" . ChallengeTest::solve($nonce) . '&to=%2F', peer: FakeAnalyst::CHALLENGED_IP));
+        $cookie = explode(';', (string) $ok->header('set-cookie'))[0];
+        $r = $h(new Call('GET', '/api', headers: [...self::JSON, ['cookie', $cookie]], peer: FakeAnalyst::CHALLENGED_IP));
+        self::assertSame(200, $r->status);
+        self::assertNull($r->header('x-camada-challenge'));
+        foreach ($this->events($h) as $ev) {
+            self::assertArrayNotHasKey('chs', $ev);
+        }
     }
 
     public function testBlocksOutrightRatherThanChallengingABlockedIp(): void
@@ -635,6 +676,43 @@ final class EngineTest extends TestCase
         $ok = $h(new Call('POST', '/__camada/challenge', body: "nonce={$nonce}&solution=" . ChallengeTest::solve($nonce) . '&to=%2Fchallenge-me'));
         $cookie = explode(';', (string) $ok->header('set-cookie'))[0];
         self::assertSame('secret page', $h(new Call('GET', '/challenge-me', headers: [...self::HTML, ['cookie', $cookie]]))->body);
+    }
+
+    public function testServeChallengeOnDemandSignalsANonHtmlRequest(): void
+    {
+        $this->a->container = 'v4';
+        $h = $this->host(handler: static function (Context $c): array {
+            self::assertNull($c->engine?->serveChallenge($c));
+            return [200, [['cache-control', 'public']], 'api json'];
+        });
+        $r = $h(new Call('GET', '/challenge-me', headers: self::JSON, peer: FakeAnalyst::CHALLENGED_IP));
+        self::assertSame(200, $r->status);
+        self::assertSame('api json', $r->body);
+        self::assertSame('1', $r->header('x-camada-challenge'));
+        self::assertSame('no-store', $r->header('cache-control'));
+        $evs = $this->events($h);
+        self::assertCount(1, $evs);
+        self::assertSame(1, $evs[0]['chs']);
+        self::assertSame(200, $evs[0]['st']);
+        self::assertArrayNotHasKey('blk', $evs[0]);
+    }
+
+    public function testServeChallengeOnDemandSignalsAnUnsignalledNonHtmlRequest(): void
+    {
+        $this->a->container = 'v4';
+        $this->a->config['sample'] = 0;   // the signalled event ships regardless
+        $h = $this->host(handler: static function (Context $c): array {
+            self::assertNull($c->engine?->serveChallenge($c));
+            return [200, [['cache-control', 'public']], 'api json'];
+        });
+        $r = $h(new Call('GET', '/challenge-me', headers: self::JSON));
+        self::assertSame(200, $r->status);
+        self::assertSame('api json', $r->body);
+        self::assertSame('1', $r->header('x-camada-challenge'));
+        self::assertSame('no-store', $r->header('cache-control'));
+        $evs = $this->events($h);
+        self::assertCount(1, $evs);
+        self::assertSame(1, $evs[0]['chs']);
     }
 
     // ---- fail open ----
