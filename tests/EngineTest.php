@@ -697,6 +697,24 @@ final class EngineTest extends TestCase
         self::assertArrayNotHasKey('blk', $evs[0]);
     }
 
+    public function testServeChallengeOnDemandSignalsAnUnsignalledNonHtmlRequest(): void
+    {
+        $this->a->container = 'v4';
+        $this->a->config['sample'] = 0;   // the signalled event ships regardless
+        $h = $this->host(handler: static function (Context $c): array {
+            self::assertNull($c->engine?->serveChallenge($c));
+            return [200, [['cache-control', 'public']], 'api json'];
+        });
+        $r = $h(new Call('GET', '/challenge-me', headers: self::JSON));
+        self::assertSame(200, $r->status);
+        self::assertSame('api json', $r->body);
+        self::assertSame('1', $r->header('x-camada-challenge'));
+        self::assertSame('no-store', $r->header('cache-control'));
+        $evs = $this->events($h);
+        self::assertCount(1, $evs);
+        self::assertSame(1, $evs[0]['chs']);
+    }
+
     // ---- fail open ----
 
     public function testKeepsServingWhenIngestIsDown(): void
