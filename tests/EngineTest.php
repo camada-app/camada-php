@@ -6,6 +6,7 @@ namespace Camada\Tests;
 
 use Camada\Camada;
 use Camada\Challenge\Page;
+use Camada\Constants;
 use Camada\Context;
 use Camada\Guarded;
 use Camada\Req;
@@ -381,6 +382,21 @@ final class EngineTest extends TestCase
         self::assertSame('sdk-php', $row['tap']);
         self::assertSame('1x1', $row['scr']);
         self::assertSame('r-1', $row['rid']);
+    }
+
+    public function testStripsSdkAttestedKeysFromTheBeaconBody(): void
+    {
+        $h = $this->host();
+        $forged = array_fill_keys(Constants::REQUEST_ROW_KEYS, 'forged');
+        $body = (string) json_encode($forged + ['rid' => 'r-1', 'tz' => 'UTC']);
+        self::assertSame(204, $h(new Call('POST', '/_cam/fp', body: $body))->status);
+        $rows = $this->events($h);
+        self::assertCount(1, $rows);
+        self::assertSame(1, $rows[0]['sig']);
+        self::assertSame('r-1', $rows[0]['rid']);
+        self::assertSame('UTC', $rows[0]['tz']);
+        self::assertSame('sdk-php', $rows[0]['tap']);
+        self::assertSame([], array_intersect_key($rows[0], $forged));
     }
 
     public function testDropsJunkBodiesInsteadOfShippingThem(): void
