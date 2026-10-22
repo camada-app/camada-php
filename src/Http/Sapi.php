@@ -57,6 +57,11 @@ final class Sapi
             if ($p->ctx !== null) {
                 // read when PHP sends the headers: serveChallenge() may flag the request from inside the app
                 $ctx = $p->ctx;
+                if ($ctx->signalled) {
+                    // already flagged (the common case): stamp now, so an app that registers its own header callback cannot drop it
+                    header('x-camada-challenge: 1');
+                    header('cache-control: no-store');
+                }
                 header_register_callback(static function () use ($ctx): void {
                     if ($ctx->signalled) {
                         header('x-camada-challenge: 1');

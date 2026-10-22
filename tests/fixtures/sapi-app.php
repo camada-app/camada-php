@@ -62,6 +62,17 @@ switch ($path) {
         header('content-type: application/json');
         echo '{"ok":true}';
         break;
+    case '/api-late':
+        // the app touches cache-control / registers its own header callback AFTER Sapi::run()
+        if (isset($_SERVER['HTTP_X_TEST_OWN_CALLBACK'])) {
+            header_register_callback(static function (): void {
+            });
+        } else {
+            header('Cache-Control: public, max-age=600');
+        }
+        header('content-type: application/json');
+        echo '{"ok":true}';
+        break;
     case '/echo':
         echo (string) file_get_contents('php://input');
         break;

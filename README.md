@@ -214,6 +214,7 @@ context). The event name is free-form; the analyst's app-context rules read this
 A route you gate yourself: `$cam->serveChallenge($ctx)` returns the page as an `Answer` to hand
 to `Sapi::send()` (and then `return`) for a page load until the browser holds a valid `_cch`, then `null`.
 A non-HTML request also gets `null`: it is signalled (`x-camada-challenge: 1`, `no-store`, `chs: 1`) and the app answers.
+A request flagged late (by `serveChallenge()` from inside the app) is stamped through `header_register_callback`, which an app callback registered later would replace.
 
 ## What this tap can see
 
