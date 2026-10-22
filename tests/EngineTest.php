@@ -619,7 +619,9 @@ final class EngineTest extends TestCase
         $bare = explode(';', $cookie)[0];
         self::assertSame(200, $h(new Call('GET', '/back', headers: [...self::HTML, ['cookie', $bare]], peer: FakeAnalyst::CHALLENGED_IP))->status);
         self::assertSame(200, $h(new Call('GET', '/back', headers: [...self::HTML, ['cookie', $bare]], peer: '192.0.2.21'))->status);   // not challenged at all
-        $forged = '_cch=' . preg_replace('/0/', '1', substr($bare, 5), 1);
+        // flip the last mac digit so the forgery always differs from the real cookie
+        $forged = substr($bare, 0, -1) . (substr($bare, -1) === '0' ? '1' : '0');
+        self::assertNotSame($bare, $forged);
         self::assertSame(403, $h(new Call('GET', '/back', headers: [...self::HTML, ['cookie', $forged]], peer: FakeAnalyst::CHALLENGED_IP))->status);
     }
 
