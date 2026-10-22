@@ -16,6 +16,13 @@ final class Context
     /** Set by serveChallenge(): the challenge row already shipped, so onFinish ships nothing. */
     public bool $challenged = false;
 
+    /**
+     * A non-HTML request passed under a challenge: the response carries `x-camada-challenge: 1` and
+     * `no-store`, and its event `chs: 1`. Adapters read it when the response headers are written,
+     * since serveChallenge() can set it from inside the app.
+     */
+    public bool $signalled = false;
+
     public function __construct(
         public readonly ?string $rid = null,
         public readonly ?string $sid = null,

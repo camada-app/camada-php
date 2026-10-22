@@ -172,9 +172,16 @@ final class SapiTest extends TestCase
         self::assertSame(['no-store'], $page['headers']['cache-control']);
         self::assertSame([Page::csp()], $page['headers']['content-security-policy']);   // its own policy, by hash (camada-all-y38o)
         self::assertStringContainsString('name="to" value="/account?tab=1"', $page['body']);
-        $json = $app->request('GET', '/api', ['accept' => 'application/json', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP]);
-        self::assertSame(403, $json['status']);
-        self::assertSame('{"error":"challenge_required"}', $json['body']);
+        $json = $app->request('GET', '/api', ['accept' => 'application/json', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP, 'x-test-upstream-cache' => '1']);
+        self::assertSame(200, $json['status']);   // the app answers, flagged
+        self::assertSame('{"ok":true}', $json['body']);
+        self::assertSame(['1'], $json['headers']['x-camada-challenge']);
+        self::assertSame(['no-store'], $json['headers']['cache-control']);   // replaces the app's public
+        $gateJson = $app->request('GET', '/gate', ['accept' => 'application/json', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP]);
+        self::assertSame(200, $gateJson['status']);   // serveChallenge() returned null from inside the app
+        self::assertSame('secret page', $gateJson['body']);
+        self::assertSame(['1'], $gateJson['headers']['x-camada-challenge']);
+        self::assertSame(['no-store'], $gateJson['headers']['cache-control']);
         $nonce = explode('"', explode('name="nonce" value="', $page['body'])[1])[0];
         $form = "nonce={$nonce}&solution=" . ChallengeTest::solve($nonce) . '&to=%2Faccount%3Ftab%3D1';
         $ok = $app->request('POST', '/__camada/challenge', ['content-type' => 'application/x-www-form-urlencoded', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP], $form);
@@ -192,10 +199,11 @@ final class SapiTest extends TestCase
         $ok2 = $app->request('POST', '/__camada/challenge', ['content-type' => 'application/x-www-form-urlencoded'], "nonce={$nonce2}&solution=" . ChallengeTest::solve($nonce2) . '&to=%2Fgate');
         $cookie2 = explode(';', $ok2['headers']['set-cookie'][0])[0];
         self::assertSame('secret page', $app->request('GET', '/gate', self::HTML + ['cookie' => $cookie2])['body']);
-        $evs = $this->spool(5);
+        $evs = $this->spool(6);
         $kinds = array_map(static fn (array $e): string => ($e['blk'] ?? '') . '/' . ($e['ch'] ?? '') . '/' . $e['st'], $evs);
         self::assertContains('challenge//403', $kinds);
         self::assertContains('/1/200', $kinds);
+        self::assertCount(2, array_filter($evs, static fn (array $e): bool => ($e['chs'] ?? null) === 1 && $e['st'] === 200 && !isset($e['blk'])));
     }
 
     public function testTheChallengePageReplacesTheHostsCsp(): void

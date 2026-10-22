@@ -245,13 +245,18 @@ class Camada
         // A challenge needs a resolved client IP: the nonce and the _cch cookie are bound to it,
         // so without one a single solve would mint a cookie every unidentified client could
         // present. No ip -> no challenge (fail open), the same stance ip rules take.
+        $signalled = false;
         if ($this->challengeOn && $ip !== null && $ip !== '') {
             // The verify endpoint answers first: a challenged client must be able to reach it.
             if ($req->method === 'POST' && $req->path === $this->challengePath) {
                 return $this->verify($req, $body, $ip);
             }
             if ($v->challenge && !$this->challengePassed($req, $ip)) {
-                return $this->challengeAnswer($req, $ip, self::cookieValue($req->header('cookie'), Constants::SESSION_COOKIE));
+                // A page load gets the challenge; anything else (fetch/XHR/API) passes to the app, flagged.
+                if (Format::wantsHtml($req->header('accept'), $req->header('sec-fetch-dest'))) {
+                    return $this->challengeAnswer($req, $ip, self::cookieValue($req->header('cookie'), Constants::SESSION_COOKIE));
+                }
+                $signalled = true;
             }
         }
 
@@ -276,6 +281,7 @@ class Camada
             }
         }
         $ctx = new Context(rid: $rid, sid: $sid, ip: $ip, req: $req, engine: $this);
+        $ctx->signalled = $signalled;
 
         $cfg = $snap->config() ?? [];
         $excluded = false;
@@ -293,7 +299,11 @@ class Camada
             try {
                 // serveChallenge() may have answered from inside the app, and it already shipped
                 // the `blk: "challenge"` row — one request, one event.
-                if ($ctx->challenged || $excluded || !$sampled) {
+                if ($ctx->challenged) {
+                    return;
+                }
+                // A signalled request ships regardless of sample and exclude, like the 403 row it replaces.
+                if (!$ctx->signalled && ($excluded || !$sampled)) {
                     return;
                 }
                 $ev = $this->event($req, $rid, $sid, $newSession, $ip);
@@ -305,6 +315,9 @@ class Camada
                 }
                 if ($warnRule !== null) {
                     $ev['wrn'] = $warnRule;   // §D3: the warn rule that let this request through
+                }
+                if ($ctx->signalled) {
+                    $ev['chs'] = 1;   // challenge signalled (camada-all-82ar)
                 }
                 $spool->push($ev);
             } catch (\Throwable $err) {
@@ -368,17 +381,13 @@ class Camada
     }
 
     /**
-     * 403 + the proof-of-work page (HTML navigations) or 403 JSON (everything else), plus the
+     * 403 + the proof-of-work page (HTML navigations only), plus the
      * `blk: "challenge"` event — a served challenge is reported like a block (contract §D2).
      */
     private function challengeAnswer(Req $req, string $ip, ?string $sid): Answer
     {
         $to = Format::safeReturnTo($req->path . $req->query);
-        if (Format::wantsHtml($req->header('accept'), $req->header('sec-fetch-dest'))) {
-            $answer = $this->page($ip, $to);
-        } else {
-            $answer = new Answer(403, [['content-type', 'application/json'], ['cache-control', 'no-store'], ['x-camada-challenge', '1']], '{"error":"challenge_required"}');
-        }
+        $answer = $this->page($ip, $to);
         try {
             $ev = $this->event($req, self::uuid(), $sid, false, $ip);
             $ev['st'] = 403;
@@ -420,7 +429,8 @@ class Camada
     /**
      * Serve the challenge for this request on demand — for a route the app wants to gate
      * itself. Null when the client already holds a valid _cch (render your own page), or when
-     * the client cannot be identified (fail open).
+     * the client cannot be identified (fail open). A non-HTML request is never challenged: it is
+     * signalled (`x-camada-challenge` header and a `chs: 1` event) and null is returned, so the app answers.
      */
     public function serveChallenge(?Context $ctx): ?Answer
     {
@@ -431,6 +441,10 @@ class Camada
             $req = $ctx->req;
             $ip = $ctx->ip;
             if ($req === null || $ip === null || $ip === '' || $this->challengePassed($req, $ip)) {
+                return null;
+            }
+            if (!Format::wantsHtml($req->header('accept'), $req->header('sec-fetch-dest'))) {
+                $ctx->signalled = true;
                 return null;
             }
             $ctx->challenged = true;

@@ -176,6 +176,24 @@ final class LaravelTest extends TestCase
         self::assertSame(403, $page->getStatusCode());
         self::assertSame('1', $page->headers->get('x-camada-challenge'));
         self::assertSame(\Camada\Challenge\Page::csp(), $page->headers->get('content-security-policy'));   // camada-all-y38o
+        $api = self::request('GET', '/api', ['accept' => 'application/json', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP]);
+        $res = $mw->handle($api, static fn (Request $r): Response => new Response('app', 200, ['cache-control' => 'public, max-age=600']));
+        self::assertSame(200, $res->getStatusCode());   // the app answers, flagged
+        self::assertSame('1', $res->headers->get('x-camada-challenge'));
+        self::assertSame('no-store, private', $res->headers->get('cache-control'));   // Symfony adds `private` to a policy with neither it nor `public`; the app's public is gone
+        $gate = self::request('GET', '/gate', ['accept' => 'application/json', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP]);
+        $res2 = $mw->handle($gate, static function (Request $r) use ($e): Response {
+            $ctx = $r->attributes->get('camada');
+            self::assertInstanceOf(Context::class, $ctx);
+            self::assertNull($e->serveChallenge($ctx));
+            return new Response('app');
+        });
+        self::assertSame('1', $res2->headers->get('x-camada-challenge'));   // flagged from inside the app
+        self::assertStringContainsString('no-store', (string) $res2->headers->get('cache-control'));
+        $mw->terminate($api, $res);
+        $mw->terminate($gate, $res2);
+        $chs = array_filter($this->events($e), static fn (array $r): bool => ($r['chs'] ?? null) === 1);
+        self::assertCount(2, $chs);
         $nonce = explode('"', explode('name="nonce" value="', (string) $page->getContent())[1])[0];
         $form = "nonce={$nonce}&solution=" . ChallengeTest::solve($nonce) . '&to=%2Faccount';
         $ok = $mw->handle(self::request('POST', '/__camada/challenge', ['content-type' => 'application/x-www-form-urlencoded', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP], [], $form), $next);
