@@ -82,7 +82,9 @@ final class Middleware
             }
             if ($result->ctx?->signalled) {   // read now: serveChallenge() may have flagged it from inside the app
                 $response->headers->set('x-camada-challenge', '1');
-                $response->headers->set('cache-control', 'no-store');   // per client: replaces whatever the app set
+                foreach (Context::NO_STORE_HEADERS as $name) {
+                    $response->headers->set($name, 'no-store');   // per client: replaces whatever the app set
+                }
             }
         } catch (\Throwable $err) {
             Guarded::log($err);

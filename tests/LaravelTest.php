@@ -181,6 +181,14 @@ final class LaravelTest extends TestCase
         self::assertSame(200, $res->getStatusCode());   // the app answers, flagged
         self::assertSame('1', $res->headers->get('x-camada-challenge'));
         self::assertSame('no-store, private', $res->headers->get('cache-control'));   // Symfony adds `private` to a policy with neither it nor `public`; the app's public is gone
+        $cdn = $mw->handle(self::request('GET', '/api-cdn', ['accept' => 'application/json', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP]), static fn (Request $r): Response => new Response('app', 200, ['CDN-Cache-Control' => 'public, max-age=60', 'Surrogate-Control' => 'max-age=60']));
+        foreach (Context::NO_STORE_HEADERS as $name) {
+            self::assertStringStartsWith('no-store', (string) $cdn->headers->get($name), $name);   // cache-control also gets Symfony's `private`
+            self::assertCount(1, $cdn->headers->all($name), $name);
+        }
+        $open = $mw->handle(self::request('GET', '/open', ['accept' => 'application/json', 'x-forwarded-for' => '198.18.0.5']), static fn (Request $r): Response => new Response('app', 200, ['CDN-Cache-Control' => 'public, max-age=60']));
+        self::assertSame('public, max-age=60', $open->headers->get('cdn-cache-control'));   // not signalled: untouched
+        self::assertNull($open->headers->get('x-camada-challenge'));
         $gate = self::request('GET', '/gate', ['accept' => 'application/json', 'x-forwarded-for' => FakeAnalyst::CHALLENGED_IP]);
         $res2 = $mw->handle($gate, static function (Request $r) use ($e): Response {
             $ctx = $r->attributes->get('camada');
