@@ -278,7 +278,10 @@ final class ParseTest extends TestCase
             '(a)*x\1', '(a){0,2}x\1',   // JS drops an empty iteration, captures included; PCRE keeps it and overwrites the capture
             '(a?)*x\1', '(a|)*x\1', '(a*)*x\1', '(a?){0,2}x\1', '(a|b?)*\1', '(b*)*x\1', '(b|)*x\1',
             '(?=(a))?a\1', '(?:(?=(a)))?a\1', '(?=(a)){0,1}a\1', '(?:(?=(a))|b)?a\1', '(?:(?=(a))b?)?a\1', '(?=(a))?\1', '(?<a>x)(?=(?<b>y))?y\k<b>', '(?<n>(?=(a))?)a\2', '(?:(?=(a))a|(?=(b)))?b?\1\2',
-            '(?=(a)?)a\1', '(?=(?:(a))?)a\1', '(?=(a??)?)\1a', '(?=(?:a??)?(b)?)a\1', '(?=(a*?){0,1})[ab]*\1', '(?=x(?<n>a??(x)*|){0,1})x\k<n>'] as $re) {
+            '(?=(a)?)a\1', '(?=(?:(a))?)a\1', '(?=(a??)?)\1a', '(?=(?:a??)?(b)?)a\1', '(?=(a*?){0,1})[ab]*\1', '(?=x(?<n>a??(x)*|){0,1})x\k<n>',
+            '(b*)+x\1', '(b|)+x\1', '(a?)+x\1', '\1(b*)+x\1', '(?:(b*))+x\1', '(?<m>b*)+x\k<m>', '(\x41?)+x\1',   // a repeat that can match empty keeps JS's capture
+            '(é?)+x\1', '([a]?)+x\1', '(a{0,2})+x\1', '(a|b?)+\1', '(?<n>)(?<m>a?\k<n>)+x\k<m>',
+            '((?i:a?))+x\1', '((?i-m:a?))+x\1', '((?-i:a?))+x\1', '((?m:b*))+x\1', '(?:(?i:(b*)))+x\1', '(?i:(b*))+x\1', '(?<m>(?i:b*))+x\k<m>'] as $re) {
             self::assertNull(Regex::compile($re), $re);
         }
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^(?:' . $re . ')$'), $v);   // node: new RegExp('^(?:' + re + ')$')
@@ -293,6 +296,18 @@ final class ParseTest extends TestCase
             ['(a)?(b)?\2\1c', 'c', true], ['(a)?(b)?\2\1c', 'bbc', true], ['(a)?(b)?\2\1c', 'abbac', true],
             ['[(?<]\k<n>', '(k<n>', true], ['\(?<n>x', '(<n>x', true], ['[\1](a)', "\x01a", true]] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);
+            self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
+        }
+    }
+
+    public function testBackreferenceToARepeatThatCannotMatchEmptyStillCompiles(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^(?:' . $re . ')$'), $v);
+        foreach ([['(a)+x\1', 'axa', true], ['(a)+x\1', 'axb', false], ['(\w)+\1', 'abb', true], ['(\w)+\1', 'ab', false],
+            ['(?:(b)c?)+x\1', 'bcbxb', true], ['(?:(b)c?)+x\1', 'bcbxc', false], ['(a{1,2})+x\1', 'aaxa', true], ['(a{1,2})+x\1', 'ax', false],
+            ['(\x41)+x\1', 'AxA', true], ['(\x41)+x\1', 'Ax', false], ['(?:(a?)\1)+', 'aa', true], ['(?:(a?)\1)+', '', true], ['(?:(a?)\1)+', 'a', false],
+            ['(?i:(a))+x\1', 'axa', true], ['(?i:(a))+x\1', 'AxA', true], ['(?i:(a))+x\1', 'axb', false]] as [$re, $v, $want]) {
+            self::assertNotNull(Regex::compile($re), $re);   // the reference in the last rows sits inside the repeat: it reads its own iteration
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
         }
     }
