@@ -299,7 +299,7 @@ final class ParseTest extends TestCase
             '(a)*x\1', '(a){0,2}x\1',   // JS drops an empty iteration, captures included; PCRE keeps it and overwrites the capture
             '(a?)*x\1', '(a|)*x\1', '(a*)*x\1', '(a?){0,2}x\1', '(a|b?)*\1', '(b*)*x\1', '(b|)*x\1',
             '(?=(a))?a\1', '(?:(?=(a)))?a\1', '(?=(a)){0,1}a\1', '(?:(?=(a))|b)?a\1', '(?:(?=(a))b?)?a\1', '(?=(a))?\1', '(?<a>x)(?=(?<b>y))?y\k<b>', '(?<n>(?=(a))?)a\2', '(?:(?=(a))a|(?=(b)))?b?\1\2',
-            '(?=(a)?)a\1', '(?=(?:(a))?)a\1', '(?=(a??)?)\1a', '(?=(?:a??)?(b)?)a\1', '(?=(a*?){0,1})[ab]*\1', '(?=x(?<n>a??(x)*|){0,1})x\k<n>',
+            '(?=(a)?)a\1', '(?=(?:(a))?)a\1', '(?=(a??)?)\1a', '(?=(?:a??)?(b?))a\1', '(?=(?:|a)?(b?))a\1', '(?=(?:a*?)*(b?))a\1', '(?=x(?=(?:a??)?(b?)))xa\1', '(?=(?:a??)?(?<n>b?))a\k<n>', '(?=(?:a??)?(b)?)a\1', '(?=(a*?){0,1})[ab]*\1', '(?=x(?<n>a??(x)*|){0,1})x\k<n>',
             '(b*)+x\1', '(b|)+x\1', '(a?)+x\1', '\1(b*)+x\1', '(?:(b*))+x\1', '(?<m>b*)+x\k<m>', '(\x41?)+x\1',   // a repeat that can match empty keeps JS's capture
             '(é?)+x\1', '([a]?)+x\1', '(a{0,2})+x\1', '(a|b?)+\1', '(?<n>)(?<m>a?\k<n>)+x\k<m>',
             '((?i:a?))+x\1', '((?i-m:a?))+x\1', '((?-i:a?))+x\1', '((?m:b*))+x\1', '(?:(?i:(b*)))+x\1', '(?i:(b*))+x\1', '(?<m>(?i:b*))+x\k<m>'] as $re) {
@@ -315,7 +315,7 @@ final class ParseTest extends TestCase
             ['(?<q>["\'])?x\k<q>', 'x', true], ['(?<q>["\'])?x\k<q>', '"x"', true], ['(?<q>["\'])?x\k<q>', '"x', false], ['(?<q>["\'])?x\k<q>', "'x'", true], ['(?<q>["\'])?x\k<q>', "'x\"", false],
             ['(?<m>)|\k<n>(?<n>b)', '', true], ['(?<m>)|\k<n>(?<n>b)', 'b', true], ['a|\k<n>(?<n>b)', 'a', true], ['a|\k<n>(?<n>b)', 'b', true], ['a|\k<n>(?<n>b)', 'ab', false],
             ['(a)?(b)?\2\1c', 'c', true], ['(a)?(b)?\2\1c', 'bbc', true], ['(a)?(b)?\2\1c', 'abbac', true],
-            ['[(?<]\k<n>', '(k<n>', true], ['\(?<n>x', '(<n>x', true], ['[\1](a)', "\x01a", true]] as [$re, $v, $want]) {
+            ['(?=(?:a)?(b?))a\1', 'ab', true], ['(?=(?:a)?(b?))a\1', 'a', true], ['[(?<]\k<n>', '(k<n>', true], ['\(?<n>x', '(<n>x', true], ['[\1](a)', "\x01a", true]] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
         }
