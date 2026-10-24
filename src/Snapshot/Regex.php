@@ -9,13 +9,15 @@ namespace Camada\Snapshot;
  * read here by PCRE without the `u` flag, so \d \w \b stay ASCII as JS reads them. `(?<name>`
  * and `\cX` are native; `[^]` (any char) becomes `[\s\S]`; a `{` that is no JS quantifier
  * (`{,3}`, `{ 1}`) becomes `\{` (JS reads it as text, PCRE as a bound); the delimiter is escaped.
- * `$` ends the subject only (the `D` modifier; PCRE also matches it before a trailing newline, JS does not).
- * `\<letter>` outside JS's escape set is the bare letter, as JS reads it without `u` (`\p{L}` is "p{L}",
- * `\A` is "A"); `\uHH`-range code units become `\xHH`. A pattern
+ * `$` ends the subject only (the `D` modifier: PCRE also matches it before a trailing newline, JS
+ * does not). `\<letter>` outside JS's escape set is the bare letter, as JS reads it without `u`
+ * (`\p{L}` is "p{L}", `\A` is "A"); `\u00HH` becomes `\xHH` and `\v` becomes `\x0B`. A pattern
  * PCRE still rejects never matches and never throws — and never surfaces a warning (fail open).
  */
 final class Regex
 {
+    private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
+
     /** The delimited PCRE pattern, or null when this runtime rejects the spelling. `$flags` is 'i' for a path regex (§D3 "Path matching"). */
     public static function compile(string $js, string $flags = ''): ?string
     {
@@ -41,25 +43,25 @@ final class Regex
         $out = '';
         $n = strlen($pattern);
         $inClass = false;
+        $named = preg_match('/\(\?<(?![=!])/', $pattern) === 1;
         for ($i = 0; $i < $n;) {
             $ch = $pattern[$i];
             if ($ch === '\\' && $i + 1 < $n) {
                 $c = $pattern[$i + 1];
-                $i += 2;
-                if (!ctype_alpha($c) || ($c === 'B' && $inClass)) {
-                    $out .= $c === 'B' ? $c : '\\' . $c;   // `\/` and `\\` stay what they are; `[\B]` is "B"
-                } elseif (str_contains('bBdDfnrstvwWSc', $c)) {
-                    $out .= '\\' . $c;
-                } elseif ($c === 'x' && preg_match('/\G[0-9a-fA-F]{2}/', $pattern, $unused, 0, $i) === 1) {
-                    $out .= '\\x';
-                } elseif ($c === 'u' && preg_match('/\G[0-9a-fA-F]{4}/', $pattern, $m, 0, $i) === 1) {
-                    $out .= substr($m[0], 0, 2) === '00' ? '\\x' . substr($m[0], 2) : '\\u';   // PCRE has no \u; above \xFF it fails open
-                    $i += substr($m[0], 0, 2) === '00' ? 4 : 0;
-                } elseif ($c === 'k' && preg_match('/\(\?<[^=!]/', $pattern) === 1) {
-                    $out .= '\\k';
-                } else {
-                    $out .= $c;   // identity escape: JS without `u` reads `\e`, `\p`, `\A` as the letter
+                if (preg_match('/\Gu00([0-9a-fA-F]{2})/', $pattern, $m, 0, $i + 1) === 1) {
+                    $out .= '\\x' . $m[1];   // PCRE has no `\u`; a code unit above \xFF stays `\u` and fails open
+                    $i += 6;
+                    continue;
                 }
+                $kept = !ctype_alpha($c) || preg_match(self::JS_ESCAPE, $pattern, $unused, 0, $i + 1) === 1
+                    || ($c === 'B' && !$inClass) || ($c === 'k' && $named) || ($c === 'c' && ($inClass || ctype_alpha($pattern[$i + 2] ?? '')));
+                $out .= match (true) {
+                    $c === 'v' => '\\x0B',   // PCRE `\v` is any vertical space, JS only VT
+                    $kept => '\\' . $c,     // `\/` and `\\` stay what they are
+                    $c === 'c' => '\\\\c',  // JS reads `\c` before a non-letter as text
+                    default => $c,          // JS without `u` reads `\e`, `\p`, `\A` as the letter
+                };
+                $i += 2;
                 continue;
             }
             if ($ch === '/') {

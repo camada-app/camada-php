@@ -224,6 +224,8 @@ final class ParseTest extends TestCase
             ['^\k$', 'k', true], ['(?<n>a)\k<n>', 'aa', true],
             ['^[\B]$', 'B', true], ['^[\p]$', 'p', true], ['^[\b]$', "\x08", true],
             ['^\d\w\s$', '1a ', true],
+            ['^\c1$', '\c1', true], ['^\c$', '\c', true],
+            ['^\v$', "\v", true], ['^\v$', "\n", false],
         ] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
