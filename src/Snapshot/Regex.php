@@ -24,7 +24,9 @@ namespace Camada\Snapshot;
  * never throws — and never surfaces a warning (fail open). A backreference to a group that may not have captured on
  * that pass reads empty in JS and fails in PCRE: a forward or self reference becomes `(?:)`, one to a group under a min-0
  * quantifier or negative lookaround or in an alternation branch becomes the conditional `(?(N)\N)` (see scanGroups). It
- * fails open when a repeating ancestor of the group holds it (JS resets captures per iteration, PCRE keeps the last one).
+ * fails open when the group or an ancestor repeats (JS resets captures per iteration and refuses an empty one, PCRE keeps
+ * the last capture or an empty one), or when it sits in a positive lookahead under a min-0 quantifier (JS drops that
+ * empty iteration's capture, PCRE keeps it).
  * Group names are rewritten to ordinals (`n1`, `n2`, ...; one per distinct name) since JS accepts Unicode names and
  * PCRE without `u` neither those nor one past 32 chars.
  * JS matches a lookbehind right to left, so the same applies to a backreference inside a lookbehind or to a group
@@ -227,8 +229,9 @@ final class Regex
      * [its end, true for a conditional, false for `(?:)`]}, {group name => ordinal ASCII name}]: one escape- and class-aware walk
      * (a class opens at an unescaped `[`, `[` is literal inside, the first unescaped `]` closes it). JS reads a
      * reference to an unset group as empty. One whose group is still open at the reference (forward or self) is always empty: false. One whose group sits under a min-0 quantifier or a negative lookaround (itself or any ancestor), or lies in an
-     * alternation branch (an ancestor or the top level has a `|`), may be unset: true, unless a strict ancestor of the group
-     * repeats (JS resets captures per iteration, PCRE keeps them): fail open. A name that is no JS identifier fails open. Frames are
+     * alternation branch (an ancestor or the top level has a `|`), may be unset: true, unless the group or an ancestor repeats
+     * (JS resets captures per iteration and refuses an empty one, PCRE keeps them) or it sits in a positive lookahead under a
+     * min-0 quantifier (JS drops that empty iteration's capture): fail open. A name that is no JS identifier fails open. Frames are
      * created in `(` order, so one forward pass gives each its inherited flags and every reference is classified in O(1).
      */
     private static function scanGroups(string $p): array
