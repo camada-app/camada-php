@@ -11,7 +11,7 @@ namespace Camada\Snapshot;
  * (`{,3}`, `{ 1}`) becomes `\{` (JS reads it as text, PCRE as a bound); the delimiter is escaped.
  * `$` ends the subject only (the `D` modifier: PCRE also matches it before a trailing newline, JS
  * does not). `\<letter>` outside JS's escape set is the bare letter, as JS reads it without `u`
- * (`\p{L}` is "p{L}", `\A` is "A"); ASCII `\u00HH` (below 0x80) becomes `\xHH` and `\v` becomes `\x0B`. At byte
+ * (`\p{L}` is "p{L}", `\A` is "A"); `\u00HH`/`\xHH` below 0x80 become `\xHH` (0x80 and up fail open: PCRE has no `\u`, \xHH is a byte), in a class `\c` before a digit or `_` is its control char, and `\v` becomes `\x0B`. At byte
  * level, as JS reads them: `.` excludes \n \r U+2028 U+2029 (DOT); `[]` never matches (`(?!)`, a `]` right after
  * `[`/`[^` closes the class, a stray `]` is text); `\s`/`\S` are JS's Unicode whitespace (WS/NWS), and inside a class
  * they become a union with the rest of it (atomic, WS first, so a char matches one way only: no ReDoS), a `-` beside one
@@ -21,7 +21,7 @@ namespace Camada\Snapshot;
  */
 final class Regex
 {
-    private const JS_ATOM = '/\G(?:\\\\(?:c[A-Za-z]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[\s\S])|[\s\S])/';   // one class atom
+    private const JS_ATOM = '/\G(?:\\\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[\s\S])|[\s\S])/';   // one class atom
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
@@ -76,13 +76,19 @@ final class Regex
                     $i += 2;
                     continue;
                 }
-                if (preg_match('/\Gu00([0-7][0-9a-fA-F])/', $pattern, $m, 0, $i + 1) === 1) {
-                    $out .= '\\x' . $m[1];   // PCRE has no `\u`; only ASCII maps (no u flag: \x80+ is a byte), \u0080 and up stay `\u` and fail open
-                    $i += 6;
+                if (preg_match('/\G(?:u00|x)([0-9a-fA-F]{2})/', $pattern, $m, 0, $i + 1) === 1) {
+                    $high = hexdec($m[1]) >= 0x80;   // PCRE has no `\u`, and without the `u` flag \xHH is a byte, not U+00HH: 0x80 and up stay `\u00HH` and fail open
+                    $out .= ($high ? '\\u00' : '\\x') . $m[1];
+                    $i += $c === 'x' ? 4 : 6;
+                    continue;
+                }
+                if ($inClass && $c === 'c' && preg_match('/[0-9_]/A', $pattern[$i + 2] ?? '') === 1) {
+                    $out .= sprintf('\\x%02X', ord($pattern[$i + 2]) & 0x1F);   // JS Annex B: `[\c1]` is the control char, PCRE reads 'q'
+                    $i += 3;
                     continue;
                 }
                 $kept = !ctype_alpha($c) || preg_match(self::JS_ESCAPE, $pattern, $unused, 0, $i + 1) === 1
-                    || ($c === 'B' && !$inClass) || ($c === 'k' && $named) || ($c === 'c' && ($inClass || ctype_alpha($pattern[$i + 2] ?? '')));
+                    || ($c === 'B' && !$inClass) || ($c === 'k' && $named) || ($c === 'c' && ctype_alpha($pattern[$i + 2] ?? ''));
                 $out .= match (true) {
                     $c === 'v' => '\\x0B',   // PCRE `\v` is any vertical space, JS only VT
                     $kept => '\\' . $c,     // `\/` and `\\` stay what they are
