@@ -21,7 +21,9 @@ namespace Camada\Snapshot;
  * POSIX classes, as in JS). An atom never starts inside a whitespace or line-terminator char (a lookbehind refuses its
  * continuation bytes; dropped when a huge repeat overflows PCRE). Inside a lookbehind `\s`/`\S` stay PCRE's ASCII ones
  * (WS is 1-3 bytes and PCRE2 < 10.43 needs a fixed-length lookbehind). A pattern PCRE still rejects never matches and
- * never throws — and never surfaces a warning (fail open).
+ * never throws — and never surfaces a warning (fail open). So does a backreference to a group that may not have
+ * captured on that pass (still open, under a min-0 quantifier or negative lookaround, or in an alternation branch): JS
+ * resets captures per iteration and reads it as empty, PCRE keeps the last capture and fails it (see scanGroups).
  */
 final class Regex
 {
@@ -39,6 +41,9 @@ final class Regex
     /** The delimited PCRE pattern, or null when this runtime rejects the spelling. `$flags` is 'i' for a path regex (§D3 "Path matching"). */
     public static function compile(string $js, string $flags = ''): ?string
     {
+        if (self::scanGroups($js)[1]) {
+            return null;
+        }
         $p = '/' . self::translate($js) . '/D' . $flags;
         if (@preg_match($p, '') !== false) {
             return $p;
@@ -78,7 +83,7 @@ final class Regex
         $inClass = false;
         [$start, $neg, $pulled, $pullEnd, $soloEnd] = [0, false, [], -1, -1];   // the open class: its `[` offset in $out, negation, \s/\S pulled out, where the last one ended, where the atom after its dash ended
         $groups = [];   // open groups, true for a lookbehind: `\s` there stays native (WS is 1-3 bytes; PCRE2 < 10.43 wants a fixed length)
-        $named = preg_match('/\(\?<(?![=!])/', $pattern) === 1;
+        $named = self::scanGroups($pattern)[0];
         for ($i = 0; $i < $n;) {
             $ch = $pattern[$i];
             if ($ch === '\\' && $i + 1 < $n) {
@@ -185,6 +190,75 @@ final class Regex
         return $out;
     }
 
+    /**
+     * @return array{bool, bool} [a real `(?<name>` group exists, a backreference may target a group that did not capture]: one
+     * escape- and class-aware walk (a class opens at an unescaped `[`, `[` is literal inside, the first unescaped `]` closes it).
+     * A backreference diverges when its group is still open at the reference, sits under a min-0 quantifier or a negative
+     * lookaround (itself or any ancestor), or lies in an alternation branch (an ancestor or the top level has a `|`).
+     */
+    private static function scanGroups(string $p): array
+    {
+        [$parent, $alt, $min0, $neg, $end] = [[-1], [false], [false], [false], [-1]];   // per frame; end -1 while open
+        [$stack, $groups, $refs] = [[0], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset]
+        [$i, $n, $inClass, $named] = [0, strlen($p), false, false];
+        while ($i < $n) {
+            $ch = $p[$i];
+            if ($ch === '\\') {
+                $at = $i;
+                $i += 2;
+                if (!$inClass && preg_match(($p[$at + 1] ?? '') === 'k' ? '/\G\\\\k<([^>]+)>/' : '/\G\\\\([1-9][0-9]*)/', $p, $m, 0, $at) === 1) {
+                    $refs[] = [$m[1], ($p[$at + 1] ?? '') === 'k', $at];
+                }
+                continue;
+            }
+            $i++;
+            if ($inClass) {
+                $inClass = $ch !== ']';
+            } elseif ($ch === '[') {
+                $inClass = true;
+            } elseif ($ch === '(') {
+                $q = ($p[$i] ?? '') === '?';
+                $cap = !$q || (($p[$i + 1] ?? '') === '<' && !in_array($p[$i + 2] ?? '', ['=', '!'], true));
+                $named = $named || ($q && $cap);
+                $parent[] = $stack[count($stack) - 1];
+                [$alt[], $min0[], $end[]] = [false, false, -1];
+                $neg[] = preg_match('/\G\?<?!/', $p, $u, 0, $i) === 1;
+                $stack[] = count($parent) - 1;
+                if ($cap) {
+                    $close = strpos($p, '>', $i);
+                    $groups[] = [count($parent) - 1, $q ? substr($p, $i + 2, ($close === false ? $n : $close) - $i - 2) : null];
+                }
+            } elseif ($ch === '|') {
+                $alt[$stack[count($stack) - 1]] = true;
+            } elseif ($ch === ')' && count($stack) > 1) {
+                $f = array_pop($stack);
+                $end[$f] = $i - 1;
+                $min0[$f] = in_array($p[$i] ?? '', ['?', '*'], true)
+                    || (preg_match('/\G\{([0-9]+)(?:,[0-9]*)?\}/', $p, $b, 0, $i) === 1 && trim($b[1], '0') === '');
+            }
+        }
+        $names = [];
+        foreach ($groups as $k => [, $name]) {
+            $names += $name === null ? [] : [$name => $k];
+        }
+        foreach ($refs as [$ref, $isName, $at]) {
+            $k = $isName ? ($named ? $names[$ref] ?? null : null) : (strlen($ref) < 8 && (int) $ref <= count($groups) ? (int) $ref - 1 : null);   // past the count it is an octal or identity escape
+            if ($k === null) {
+                continue;
+            }
+            $g = $groups[$k][0];
+            if ($end[$g] < 0 || $end[$g] > $at) {
+                return [$named, true];
+            }
+            for ($f = $g; $f >= 0; $f = $parent[$f]) {
+                if ($min0[$f] || $neg[$f] || ($f !== $g && $alt[$f])) {
+                    return [$named, true];
+                }
+            }
+        }
+        return [$named, false];
+    }
+
     /** @param list<string> $pulled  Rebuild the class opened at $start as the union of its body and the \s/\S sets it held. */
     private static function union(string $out, int $start, bool $neg, array $pulled): string
     {
@@ -203,6 +277,6 @@ final class Regex
         if ($neg) {
             return $out . '(?:(?!' . implode('|', $alts) . ')' . self::IN_WS . '[\\s\\S])';
         }
-        return $out . (count($alts) > 1 ? '(?>' . implode('|', $alts) . ')' : $alts[0]);
+        return $out . (count($alts) > 1 ? '(?>' . implode('|', $alts) . ')' : implode('', $alts));
     }
 }
