@@ -263,18 +263,40 @@ final class ParseTest extends TestCase
         }
     }
 
-    public function testBackreferenceToAGroupThatMayNotHaveCapturedFailsOpen(): void
+    public function testBackreferenceToAGroupThatMayNotHaveCapturedReadsEmptyOrFailsOpen(): void
     {
-        foreach (['^(?:(?<n>a)|b)+\k<n>$', '(?<q>["\'])?x\k<q>', '\1(a)', '(a\1)', '(?:(a)|b)\1', '(a)?x\1', '(a)*x\1', '(a){0,2}x\1', '(a){00}x\1', '(?!(a))\1b', '(a)|b\1', '(?:\1(a))+',
-            '(?<=(a)\1)b', '(?<=([ab]){2})\1', '(?<=(a))\1', '(?<!(a)\1)b', '(a)(?<=\1)b', '(?<m>)|\k<n>', 'a|\k<n>(?<n>b)'] as $re) {
+        foreach (['^(?:(?<n>a)|b)+\k<n>$', '(?:(a)|b)+\1', '(?<=(a)\1)b', '(?<=([ab]){2})\1', '(?<=(a))\1', '(?<!(a)\1)b', '(a)(?<=\1)b'] as $re) {
             self::assertNull(Regex::compile($re), $re);
         }
-        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^(?:' . $re . ')$'), $v);   // node: new RegExp('^(?:' + re + ')$')
         foreach ([['(a|b)\1', 'aa', true], ['(a|b)\1', 'bb', true], ['(a|b)\1', 'ab', false], ['(a)+\1', 'aaa', true], ['(?:(a)\1)+', 'aaaa', true], ['(?<n>a)\k<n>', 'aa', true],
+            ['(?:(a)|b)\1', 'aa', true], ['(?:(a)|b)\1', 'b', true], ['(?:(a)|b)\1', 'ba', false], ['(?:(a)|b)\1', 'a', false],
+            ['(a)?x\1', 'x', true], ['(a)?x\1', 'axa', true], ['(a)?x\1', 'ax', false], ['(a)?x\1', 'aax', false],
+            ['(a)*x\1', 'x', true], ['(a)*x\1', 'aaxa', true], ['(a)*x\1', 'aax', false], ['(a){0,2}x\1', 'x', true], ['(a){0,2}x\1', 'aaxa', true], ['(a){0,2}x\1', 'aax', false],
+            ['(a){00}x\1', 'x', true], ['(a){00}x\1', 'axa', false], ['(?!(a))\1b', 'b', true], ['(?!(a))\1b', 'ab', false], ['(a)|b\1', 'a', true], ['(a)|b\1', 'b', true], ['(a)|b\1', 'ba', false],
+            ['(?:\1(a))+', 'aa', true], ['(?:\1(a))+', 'x', false], ['(a\1)', 'a', true], ['(a\1)', 'aa', false], ['\1(a)', 'a', true], ['\1(a)', 'aa', false],
+            ['(?<q>["\'])?x\k<q>', 'x', true], ['(?<q>["\'])?x\k<q>', '"x"', true], ['(?<q>["\'])?x\k<q>', '"x', false], ['(?<q>["\'])?x\k<q>', "'x'", true], ['(?<q>["\'])?x\k<q>', "'x\"", false],
+            ['(?<m>)|\k<n>(?<n>b)', '', true], ['(?<m>)|\k<n>(?<n>b)', 'b', true], ['a|\k<n>(?<n>b)', 'a', true], ['a|\k<n>(?<n>b)', 'b', true], ['a|\k<n>(?<n>b)', 'ab', false],
+            ['(a)?(b)?\2\1c', 'c', true], ['(a)?(b)?\2\1c', 'bbc', true], ['(a)?(b)?\2\1c', 'abbac', true],
             ['[(?<]\k<n>', '(k<n>', true], ['\(?<n>x', '(<n>x', true], ['[\1](a)', "\x01a", true]] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
         }
+    }
+
+    public function testGroupNamesMapToAsciiOrdinals(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^(?:' . $re . ')$'), $v);
+        $long = str_repeat('a', 40);   // PCRE caps a name at 32 chars
+        foreach ([['(?<名>é)\k<名>', 'éé', true], ['(?<名>é)\k<名>', 'é', false], ['(?<名>é)', 'é', true],
+            ['(?<' . $long . '>x)\k<' . $long . '>', 'xx', true], ['(?<' . $long . '>x)\k<' . $long . '>', 'x', false],
+            ['(?<a>x)(?<b>y)\k<a>\k<b>', 'xyxy', true], ['(?<a>x)(?<b>y)\k<a>\k<b>', 'xyyx', false],
+            ['(?<n1>x)(?<a>y)\k<a>\k<n1>', 'xyyx', true], ['(?<名>[é-ü]+)-\k<名>', 'éü-éü', true], ['(?<名>[é-ü]+)-\k<名>', 'éü-é', false],
+            ['(?<名>é)?x\k<名>', 'x', true], ['(?<名>é)?x\k<名>', 'éxé', true], ['(?<名>é)?x\k<名>', 'éx', false]] as [$re, $v, $want]) {
+            self::assertNotNull(Regex::compile($re), $re);
+            self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
+        }
+        self::assertNull(Regex::compile('(?<a-b>x)\k<a-b>'));   // not a JS identifier
     }
 
     public function testUnclosedKNameScanIsLinear(): void
