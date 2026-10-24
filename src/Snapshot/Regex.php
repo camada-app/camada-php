@@ -68,8 +68,7 @@ final class Regex
     public static function compile(string $js, string $flags = ''): ?string
     {
         [$diverges, $marks, $names] = self::scanGroups($js);
-        $body = $diverges ? null : self::translate($js, $marks, $names);
-        if ($body === null) {
+        if ($diverges || ($body = self::translate($js, $marks, $names)) === null) {
             return null;
         }
         $p = '/(*LIMIT_MATCH=' . self::MATCH_LIMIT . ')' . $body . '/D' . $flags;
