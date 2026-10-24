@@ -136,6 +136,12 @@ final class ParseTest extends TestCase
             self::assertNull(Regex::compile($re), $re);
         }
         self::assertNull(Regex::compile('(?i:a)', 'i'));
+        foreach (['(?>a+)b', '(?#c)a', '(a)?(?(1)b)', '(?|a|b)', '(?P<n>a)(?P=n)', '(a)(?1)', '(*FAIL)', '(*UTF)a', "(?'n'a)", '(?~a)', '(?<n>a)(?&n)', '(?0)', 'a(?', 'a(*'] as $re) {
+            self::assertNull(Regex::compile($re), $re);   // PCRE-only group forms JS rejects
+        }
+        foreach ([['(?:a)', 'a'], ['(?=a)a', 'a'], ['(?!b)a', 'a'], ['(?<=a)b', 'ab'], ['(?<!b)a', 'a'], ['(?<n>a)\\k<n>', 'aa'], ['[(?>]', '?'], ['\\(?>', '(>']] as [$re, $in]) {
+            self::assertTrue(Regex::test(Regex::compile($re), $in), $re);
+        }
         foreach (['(?:a)', '(?<n>a)', '(?=a)a', '(?<!a)b'] as $re) {
             self::assertNotNull(Regex::compile($re), $re);
         }
