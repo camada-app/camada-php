@@ -27,6 +27,7 @@ namespace Camada\Snapshot;
  * fails open when the group or an ancestor repeats (JS resets captures per iteration and refuses an empty one, PCRE keeps
  * the last capture or an empty one), or when the group sits inside a positive lookahead (JS rejects an empty optional iteration and
  * tries paths in another order, a lookahead keeps its first).
+ * A modifier group (`(?i:`, `(?-s:`, ...) fails open: V8 mis-evaluates them and PCRE gives the spec answer, so no translation can match (camada-all-lsl8).
  * Group names are rewritten to ordinals (`n1`, `n2`, ...; one per distinct name) since JS accepts Unicode names and
  * PCRE without `u` neither those nor one past 32 chars.
  * JS matches a lookbehind right to left, so the same applies to a backreference inside a lookbehind or to a group
@@ -47,6 +48,7 @@ final class Regex
     private static ?int $budgetNs = null;   // left in the open walk; null when none is active
     private const JS_BRACE = '/\G\{([0-9]+)(?:(,)([0-9]*))?\}/';   // a JS {m}, {m,} or {m,n}
     private const JS_REF = '/\G\\\\(?:k<([^<>]+)>|([1-9][0-9]*))/';   // a backreference: \k<name> or \N
+    private const JS_MODIFIER = '/\G\(\?[ims-]+:/';   // a modifier group: (?i:...), (?-s:...)
     private const JS_GROUP = '/\G\(\?<([^<>]*)>/';   // a named group's opener: a JS name holds no `<` or `>`
     private const OTHER_ID_START = '\x{1885}\x{1886}\x{2118}\x{212E}\x{309B}\x{309C}';   // ID_Start beyond \p{L}\p{Nl} (PCRE2 < 10.40 has no \p{ID_Start})
     private const JS_NAME = '/^(?!.*\x{2E2F})[\p{L}\p{Nl}$_' . self::OTHER_ID_START . '][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}$\x{200C}\x{200D}' . self::OTHER_ID_START
@@ -66,10 +68,11 @@ final class Regex
     public static function compile(string $js, string $flags = ''): ?string
     {
         [$diverges, $marks, $names] = self::scanGroups($js);
-        if ($diverges) {
+        $body = $diverges ? null : self::translate($js, $marks, $names);
+        if ($body === null) {
             return null;
         }
-        $p = '/(*LIMIT_MATCH=' . self::MATCH_LIMIT . ')' . self::translate($js, $marks, $names) . '/D' . $flags;
+        $p = '/(*LIMIT_MATCH=' . self::MATCH_LIMIT . ')' . $body . '/D' . $flags;
         if (@preg_match($p, '') !== false) {
             return $p;
         }
@@ -123,7 +126,7 @@ final class Regex
      * @param array<int, array{int, bool}> $marks  reference offset => [its end, true for a conditional, false for `(?:)`]
      * @param array<string, string> $names  group name => ordinal ASCII name
      */
-    private static function translate(string $pattern, array $marks, array $names): string
+    private static function translate(string $pattern, array $marks, array $names): ?string
     {
         $out = '';
         $n = strlen($pattern);
@@ -225,6 +228,9 @@ final class Regex
                 $i = $j;
                 continue;
             } elseif ($ch === '(') {
+                if (preg_match(self::JS_MODIFIER, $pattern, $unused, 0, $i) === 1) {
+                    return null;   // fail open: V8 mis-evaluates modifier groups
+                }
                 if ($names !== [] && ($pattern[$i + 1] ?? '') === '?' && preg_match(self::JS_GROUP, $pattern, $m, 0, $i) === 1 && isset($names[$m[1]])) {
                     $out .= '(?<' . $names[$m[1]] . '>';
                     $groups[] = false;

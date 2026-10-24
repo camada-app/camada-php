@@ -130,6 +130,19 @@ final class ParseTest extends TestCase
         }
     }
 
+    public function testRegexModifierGroupFailsOpen(): void
+    {
+        foreach (['(?:(a{0,2}))((\\b\\3)*?)?(?i:\\1|[^a]*)+?', '(?i:googlebot|bingbot)', '(?-i:a)', '(?s:.)', '(?m:a$)', '(?i-m:a)', 'x(?i:a)'] as $re) {
+            self::assertNull(Regex::compile($re), $re);
+        }
+        self::assertNull(Regex::compile('(?i:a)', 'i'));
+        foreach (['[(?i:a)]', '\\(?i:a\\)', '(?:a)', '(?<n>a)', '(?=a)a', '(?<!a)b'] as $re) {
+            self::assertNotNull(Regex::compile($re), $re);
+        }
+        self::assertTrue(Regex::test(Regex::compile('[(?i:a)]'), 'i'));
+        self::assertTrue(Regex::test(Regex::compile('\\(?i:a\\)'), '(i:a)'));
+    }
+
     public function testRegexPcreRejectsNeverMatchesAndNeverThrows(): void
     {
         $m = self::rulesSnapshot([['id' => 'bad', 'action' => 'block', 'conds' => [['f' => 'path', 'op' => 'matches', 'v' => '(?<=a']]]]);
