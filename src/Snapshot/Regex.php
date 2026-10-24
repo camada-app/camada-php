@@ -305,7 +305,7 @@ final class Regex
                     continue;
                 }
                 $m = [];
-                $j = preg_match(self::JS_ESC, $p, $m, 0, $i) === 1 ? $i + strlen($m[0]) : $n;
+                $j = preg_match(self::JS_ESC, $p, $m, 0, $i) === 1 ? $i + strlen($m[0]) : $i + 2;
                 if (isset($m[0]) && !in_array($m[0], ['\\b', '\\B', '\\c', '\\k'], true) && !self::min0At($p, $j)) {
                     $frames[$top]['solid'] = true;
                 }
@@ -328,11 +328,12 @@ final class Regex
                 if ($gm !== null) {
                     $quiet = $i + strlen($gm[0]);
                 } elseif ($q && $cap) {   // a name past `<` with a stray `<` or `>`: skip to the first `>`
-                    $quiet = ($gt = strpos($p, '>', $i)) === false ? $n : $gt + 1;
+                    $quiet = $i + 3 + strcspn($p, '<>', $i + 3) + 1;   // bounded to the header: a scan to the end is quadratic on long runs
                 } else {
                     $quiet = $i + ($q ? (($p[$i + 2] ?? '') === '<' ? 4 : 3) : 1);
                     if ($q && !in_array($p[$i + 2] ?? '', [':', '=', '!', '<'], true)) {   // modifier flags `(?i:`: no atoms up to the `:`
-                        $quiet = ($co = strpos($p, ':', $i)) === false ? $n : $co + 1;
+                        $quiet = $i + 2 + strspn($p, 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-', $i + 2);   // bounded to the flag run, no scan to the end
+                        $quiet += ($p[$quiet] ?? '') === ':' ? 1 : 0;
                     }
                 }
                 if ($cap) {
