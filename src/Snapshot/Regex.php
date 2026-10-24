@@ -25,8 +25,8 @@ namespace Camada\Snapshot;
  * that pass reads empty in JS and fails in PCRE: a forward or self reference becomes `(?:)`, one to a group under a min-0
  * quantifier or negative lookaround or in an alternation branch becomes the conditional `(?(N)\N)` (see scanGroups). It
  * fails open when the group or an ancestor repeats (JS resets captures per iteration and refuses an empty one, PCRE keeps
- * the last capture or an empty one), or when it sits in a positive lookahead under a min-0 quantifier (JS drops that
- * empty iteration's capture, PCRE keeps it).
+ * the last capture or an empty one), or when the group sits inside a positive lookahead (JS rejects an empty optional iteration and
+ * tries paths in another order, a lookahead keeps its first).
  * Group names are rewritten to ordinals (`n1`, `n2`, ...; one per distinct name) since JS accepts Unicode names and
  * PCRE without `u` neither those nor one past 32 chars.
  * JS matches a lookbehind right to left, so the same applies to a backreference inside a lookbehind or to a group
@@ -230,8 +230,8 @@ final class Regex
      * (a class opens at an unescaped `[`, `[` is literal inside, the first unescaped `]` closes it). JS reads a
      * reference to an unset group as empty. One whose group is still open at the reference (forward or self) is always empty: false. One whose group sits under a min-0 quantifier or a negative lookaround (itself or any ancestor), or lies in an
      * alternation branch (an ancestor or the top level has a `|`), may be unset: true, unless the group or an ancestor repeats
-     * (JS resets captures per iteration and refuses an empty one, PCRE keeps them) or it sits in a positive lookahead under a
-     * min-0 quantifier (JS drops that empty iteration's capture): fail open. A name that is no JS identifier fails open. Frames are
+     * (JS resets captures per iteration and refuses an empty one, PCRE keeps them) or it sits inside a positive lookahead (JS rejects an empty
+     * optional iteration and tries paths in another order, a lookahead keeps its first): fail open. A name that is no JS identifier fails open. Frames are
      * created in `(` order, so one forward pass gives each its inherited flags and every reference is classified in O(1).
      */
     private static function scanGroups(string $p): array
@@ -287,14 +287,13 @@ final class Regex
             }
             $ord[$name] = 'n' . (count($ord) + 1);   // every name is mapped: none collides with another, PCRE's 32-char limit never binds
         }
-        $inLb = $unset = $repAbove = $min0Up = $laMin0 = [false];   // per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a min-0 quantifier at or above, a positive lookahead under one at or above
+        $inLb = $unset = $repAbove = $inLa = [false];   // per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
         foreach (array_slice($frames, 1) as $fr) {
             $par = $frames[$fr['parent']];
             $inLb[] = $fr['lb'] || $inLb[$fr['parent']];
             $unset[] = $fr['min0'] || $fr['neg'] || $par['alt'] || $unset[$fr['parent']];
             $repAbove[] = $par['rep'] || $repAbove[$fr['parent']];
-            $min0Up[] = $fr['min0'] || $min0Up[$fr['parent']];
-            $laMin0[] = ($fr['la'] && $min0Up[count($min0Up) - 1]) || $laMin0[$fr['parent']];
+            $inLa[] = $fr['la'] || $inLa[$fr['parent']];
         }
         foreach ($refs as [$ref, $isName, $at, $end, $rf]) {
             if ($isName && $names !== [] && !isset($names[$ref])) {
@@ -311,7 +310,7 @@ final class Regex
             if ($frames[$g]['end'] < 0 || $frames[$g]['end'] > $at) {
                 $marks[$at] = [$end, false];
             } elseif ($unset[$g]) {
-                if ($repAbove[$g] || $frames[$g]['rep'] || $laMin0[$g]) {   // JS drops an empty iteration, captures included; PCRE keeps it
+                if ($repAbove[$g] || $frames[$g]['rep'] || $inLa[$g]) {   // JS drops an empty iteration, captures included; PCRE keeps it
                     return [true, [], []];
                 }
                 $marks[$at] = [$end, true];
