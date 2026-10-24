@@ -320,9 +320,11 @@ final class ParseTest extends TestCase
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
         }
         self::assertNull(Regex::compile('(?<·a>x)\k<·a>'));   // U+00B7 is ID_Continue only: a SyntaxError in JS, fails open
+        self::assertNull(Regex::compile('(?<aⸯ>x)\k<aⸯ>'));   // U+2E2F is \p{Lm} but Pattern_Syntax: a SyntaxError in JS
+        self::assertNull(Regex::compile("(?<a\n>x)\\k<a\n>"));   // a trailing newline is no part of a name
     }
 
-    public function testByteModeNonAsciiGapIsPinned(): void   // an accepted gap, camada-all-mx0s: node gives the opposite on each false/true below
+    public function testByteModeNonAsciiGapIsPinned(): void   // an accepted gap, camada-all-mx0s: node gives the opposite on each assertion down to the `agree` line
     {
         $t = static fn (string $re, string $v, string $f = ''): bool => Regex::test(Regex::compile($re, $f), $v);
         self::assertFalse($t('^.$', 'é'));   // node: true
@@ -330,6 +332,7 @@ final class ParseTest extends TestCase
         self::assertFalse($t('(.)\1', 'éé'));   // node: true
         self::assertFalse($t('^é$', 'É', 'i'));   // node: true
         self::assertFalse($t('(?<名>é)\k<名>', 'éÉ', 'i'));   // node: true
+        self::assertFalse($t('^é+$', 'éé'));   // node: true (the quantifier binds to the last byte)
         self::assertTrue($t('^é$', 'é'));   // agree
         self::assertTrue($t('^.*$', 'éé'));
         self::assertTrue($t('^[a-z]+$', 'abc'));
