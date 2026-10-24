@@ -31,6 +31,9 @@ namespace Camada\Snapshot;
  * PCRE without `u` neither those nor one past 32 chars.
  * JS matches a lookbehind right to left, so the same applies to a backreference inside a lookbehind or to a group
  * inside one, and a `\k<name>` naming no group (a SyntaxError in JS) does too.
+ * Byte mode counts bytes: a non-ASCII char is 2-4 bytes here and one UTF-16 unit in JS, so `.`, `[^a]`, `.{n}` and a
+ * backreference to a captured `.` can disagree on one, and under `i` only ASCII folds (`é` does not match `É`); literal
+ * non-ASCII text, `.*` and ASCII classes agree (an accepted gap, camada-all-mx0s).
  */
 final class Regex
 {
@@ -282,7 +285,7 @@ final class Regex
         }
         $ord = [];
         foreach (array_keys($names) as $name) {
-            if (preg_match('/^[\p{L}\p{Nl}$_][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}$\x{200C}\x{200D}]*$/u', (string) $name) !== 1) {
+            if (preg_match('/^[\p{L}\p{Nl}$_\x{1885}\x{1886}\x{2118}\x{212E}\x{309B}\x{309C}][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}$\x{200C}\x{200D}\x{1885}\x{1886}\x{2118}\x{212E}\x{309B}\x{309C}\x{00B7}\x{0387}\x{1369}-\x{1371}\x{19DA}]*$/u', (string) $name) !== 1) {
                 return [true, [], []];   // not a JS identifier (a SyntaxError), or invalid UTF-8
             }
             $ord[$name] = 'n' . (count($ord) + 1);   // every name is mapped: none collides with another, PCRE's 32-char limit never binds
