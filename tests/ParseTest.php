@@ -259,6 +259,20 @@ final class ParseTest extends TestCase
         }
     }
 
+    public function testUnterminatedClassAfterSDashFailsOpenWithoutWarnings(): void
+    {
+        set_error_handler(static function (int $no, string $str): bool {   // an `@`-suppressed diagnostic is silent; anything else fails
+            (error_reporting() & $no) === 0 || self::fail("PHP diagnostic: $str");
+            return true;
+        });
+        try {
+            self::assertNull(Regex::compile('[a\s-'));
+            self::assertNull(Regex::compile('[\s-'));
+        } finally {
+            restore_error_handler();
+        }
+    }
+
     public function testOverlappingClassUnionDoesNotBacktrackExponentially(): void
     {
         self::assertFalse(Regex::test(Regex::compile('^[ \s]+x'), str_repeat(' ', 3000), true));
