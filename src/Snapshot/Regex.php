@@ -8,7 +8,8 @@ namespace Camada\Snapshot;
  * Tenant patterns are authored as JS regexes (the analyst validates them with `new RegExp`) and
  * read here by PCRE without the `u` flag, so \d \w \b stay ASCII as JS reads them. `(?<name>`
  * and `\cX` are native; `[^]` (any char) becomes `[\s\S]`; a `{` that is no JS quantifier
- * (`{,3}`, `{ 1}`) becomes `\{` (JS reads it as text, PCRE as a bound); the delimiter is escaped.
+ * (`{,3}`, `{ 1}`) becomes `\{` (JS reads it as text, PCRE as a bound); the delimiter is escaped;
+ * a quantifier bound above PCRE's 65535 is clamped (m to 65535; `{m,n}` with n above it becomes `{m,}`).
  * `$` ends the subject only (the `D` modifier: PCRE also matches it before a trailing newline, JS
  * does not). `\<letter>` outside JS's escape set is the bare letter, as JS reads it without `u`
  * (`\p{L}` is "p{L}", `\A` is "A"); `\u00HH`/`\xHH` below 0x80 become `\xHH` (0x80 and up fail open: JS reads U+00HH,
@@ -26,6 +27,7 @@ final class Regex
 {
     private const JS_ATOM = '/\G(?:\\\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|(?!c)[\s\S])|[\s\S])/';   // one class atom
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
+    private const MAX_REP = '65535';   // PCRE2's quantifier ceiling (JS has none)
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
     private const LS = '\xE2\x80[\xA8\xA9]';
@@ -59,6 +61,14 @@ final class Regex
             $r = @preg_match('/(*NO_JIT)' . substr($compiled, 1), $value);
         }
         return $r === false || preg_last_error() !== PREG_NO_ERROR ? $onFailure : $r === 1;
+    }
+
+    /** Compares two digit strings numerically without (int) overflow. */
+    private static function cmp(string $a, string $b): int
+    {
+        $a = ltrim($a, '0');
+        $b = ltrim($b, '0');
+        return strlen($a) <=> strlen($b) ?: strcmp($a, $b);
     }
 
     private static function translate(string $pattern): string
@@ -153,7 +163,18 @@ final class Regex
                 $groups[] = preg_match('/\G\(\?<[=!]/', $pattern, $unused, 0, $i) === 1;
             } elseif ($ch === ')') {
                 array_pop($groups);
-            } elseif ($ch === '{' && preg_match('/\G\{[0-9]+(?:,[0-9]*)?\}/', $pattern, $unused, 0, $i) !== 1) {
+            } elseif ($ch === '{' && preg_match('/\G\{([0-9]+)(?:(,)([0-9]*))?\}/', $pattern, $q, 0, $i) === 1) {
+                // digit strings compared as text (no int overflow); m > n stays as written, which both engines reject
+                $len = strlen($q[0]);
+                $hi = $q[3] ?? '';
+                if ($hi === '' || self::cmp($q[1], $hi) <= 0) {
+                    $q[0] = '{' . (self::cmp($q[1], self::MAX_REP) > 0 ? self::MAX_REP : $q[1])
+                        . ($q[2] ?? '') . ($hi !== '' && self::cmp($hi, self::MAX_REP) <= 0 ? $hi : '') . '}';
+                }
+                $out .= $q[0];
+                $i += $len;
+                continue;
+            } elseif ($ch === '{') {
                 $out .= '\\{';
                 $i++;
                 continue;
