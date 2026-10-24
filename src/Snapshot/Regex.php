@@ -165,11 +165,14 @@ final class Regex
                 array_pop($groups);
             } elseif ($ch === '{' && preg_match('/\G\{([0-9]+)(?:(,)([0-9]*))?\}/', $pattern, $q, 0, $i) === 1) {
                 $i += strlen($q[0]);
-                $hi = $q[3] ?? '';
-                $out .= $hi !== '' && self::cmp($q[1], $hi) > 0
-                    ? $q[0]   // m > n stays as written, which both engines reject
-                    : '{' . (self::cmp($q[1], self::MAX_REP) > 0 ? self::MAX_REP : $q[1]) . ($q[2] ?? '')
-                        . (self::cmp($hi, self::MAX_REP) <= 0 ? $hi : '') . '}';
+                [$lo, $comma, $hi] = [$q[1], $q[2] ?? '', $q[3] ?? ''];
+                if ($hi !== '' && self::cmp($lo, $hi) > 0) {
+                    $out .= $q[0];   // m > n stays as written, which both engines reject
+                    continue;
+                }
+                $lo = self::cmp($lo, self::MAX_REP) > 0 ? self::MAX_REP : $lo;
+                $hi = self::cmp($hi, self::MAX_REP) > 0 ? '' : $hi;   // an upper bound past it never binds a real input
+                $out .= '{' . $lo . $comma . $hi . '}';
                 continue;
             } elseif ($ch === '{') {
                 $out .= '\\{';
