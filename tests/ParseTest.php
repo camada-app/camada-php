@@ -256,6 +256,8 @@ final class ParseTest extends TestCase
             ['\S', "\u{a0}", false], ['\S', "\u{3000}", false], ['\S', "\u{feff}", false], ['\S', "\u{a0}\u{a0}\u{a0}", false], ['\S', "\u{a0}a", true],
             ['.', "\u{2028}", false], ['.', "\u{2029}", false], ['.', 'é', true], ['[^\s]', "\u{a0}", false], ['[^a\s]', "\u{a0}", false],
             ['[a\S]', "\u{a0}", false], ['^\S+$', "\u{a1}", true], ['(?<=.)x', "\u{2028}x", false], ['(?<=.)x', 'éx', true],
+            ['\xA0', "\u{a0}", true], ['a\xA0', "a\u{a0}", true], ['^\xA0$', "\u{a0}", true], ['\xE9', 'é', true], ['\xA0', 'à', false],
+            ['a|\S', "\u{a0}", false], ['', "\u{a0}", true], ['$', "\u{a0}", true],
         ] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
@@ -288,12 +290,16 @@ final class ParseTest extends TestCase
         self::assertFalse(Regex::test(Regex::compile('^(.)*[xyz]$'), str_repeat('あ', 2048), true));
         self::assertTrue(Regex::test(Regex::compile('^\S*$'), str_repeat('あ', 4096), true));
         self::assertTrue(Regex::test(Regex::compile('^.*$'), str_repeat('é', 5000), true));
+        foreach (['.{700}', '\S{370}', '[^\s]{450}', '^.{1,255}$'] as $re) {
+            self::assertNotNull(Regex::compile($re), $re);
+        }
+        self::assertTrue(Regex::test(Regex::compile('.{256,}'), str_repeat('a', 300)));
     }
 
     public function testSpaceInsideALookbehindStaysFixedLength(): void
     {
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
-        self::assertSame('/(?<=\s)a/D', Regex::compile('(?<=\s)a'));
+        self::assertSame('/' . '(?<![\xC0-\xFF]|[\xE0-\xFF][\x80-\xBF]|[\xF0-\xFF][\x80-\xBF]{2})' . '(?:(?<=\s)a)/D', Regex::compile('(?<=\s)a'));
         self::assertTrue($t('(?<=\s)a', ' a'));
         self::assertTrue($t('(?<![a\s])b', 'cb'));
         self::assertFalse($t('(?<![a\s])b', ' b'));
