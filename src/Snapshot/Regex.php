@@ -16,9 +16,10 @@ namespace Camada\Snapshot;
  * level, as JS reads them: `.` excludes \n \r U+2028 U+2029 (DOT); `[]` never matches (`(?!)`, a `]` right after
  * `[`/`[^` closes the class, a stray `]` is text); `\s`/`\S` are JS's Unicode whitespace (WS/NWS), and inside a class
  * they become a union with the rest of it (atomic, WS first, so a char matches one way only: no ReDoS), a `-` beside one
- * staying a literal dash, as does a `-` right after the atom that follows it. An atom never starts inside a whitespace or
- * line-terminator char (a lookbehind refuses its continuation bytes; dropped when a huge repeat overflows PCRE). Inside
- * a lookbehind `\s`/`\S` stay PCRE's ASCII ones (WS is 1-3 bytes and PCRE2 < 10.43 needs a fixed-length lookbehind). A pattern
+ * staying a literal dash, as does a `-` right after the atom that follows it; a literal `[` in a class is escaped (no
+ * POSIX classes, as in JS). An atom never starts inside a whitespace or line-terminator char (a lookbehind refuses its
+ * continuation bytes; dropped when a huge repeat overflows PCRE). Inside a lookbehind `\s`/`\S` stay PCRE's ASCII ones
+ * (WS is 1-3 bytes and PCRE2 < 10.43 needs a fixed-length lookbehind). A pattern
  * PCRE still rejects never matches and never throws — and never surfaces a warning (fail open).
  */
 final class Regex
@@ -126,6 +127,7 @@ final class Regex
                     }
                     $ch = '\\-';   // JS reads `[a-\sz]` and `[a\s-z]` as a, -, whitespace, z
                 }
+                $ch = $ch === '[' ? '\\[' : $ch;   // JS has no POSIX classes: `[[:alpha:]]` is {[ : a l p h} then `]`
             } elseif ($ch === '.' || $ch === ']') {
                 $out .= $ch === '.' ? self::DOT : '\\]';
                 $i++;
