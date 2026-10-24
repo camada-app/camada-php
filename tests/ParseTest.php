@@ -107,6 +107,20 @@ final class ParseTest extends TestCase
         self::assertSame('c', $m->match(new MatchInput(path: '/x'))->rule);
     }
 
+    public function testRegexQuantifierBoundAbovePcreCeilingIsClamped(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
+        self::assertTrue($t('^a{1,99999999999}$', 'a'));
+        self::assertFalse($t('^a{1,99999999999}$', 'b'));
+        self::assertNotNull(Regex::compile('^a{99999999999}$'));
+        self::assertNotNull(Regex::compile('^a{99999999999,}$'));
+        self::assertNotNull(Regex::compile('^a{1,' . str_repeat('9', 40) . '}?$'));
+        self::assertTrue($t('^(?:ab){1,99999999999}$', 'abab'));
+        self::assertTrue($t('^a{2,3}$', 'aa'));
+        self::assertFalse($t('^a{2,3}$', 'a'));
+        self::assertFalse($t('^a{2,3}$', 'aaaa'));
+    }
+
     public function testRegexPcreRejectsNeverMatchesAndNeverThrows(): void
     {
         $m = self::rulesSnapshot([['id' => 'bad', 'action' => 'block', 'conds' => [['f' => 'path', 'op' => 'matches', 'v' => '(?<=a']]]]);
@@ -115,6 +129,7 @@ final class ParseTest extends TestCase
         self::assertSame('path', $m2->match(new MatchInput(path: '/dump'))->reason);
         self::assertNull(Regex::compile('(?<=a'));
         self::assertNull(Regex::compile('a{2,1}'));
+        self::assertNull(Regex::compile('a{99999999999,5}'));   // m above n is a JS error too
         self::assertFalse(Regex::test(null, 'anything'));
     }
 
