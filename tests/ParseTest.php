@@ -274,14 +274,17 @@ final class ParseTest extends TestCase
 
     public function testBackreferenceToAGroupThatMayNotHaveCapturedReadsEmptyOrFailsOpen(): void
     {
-        foreach (['^(?:(?<n>a)|b)+\k<n>$', '(?:(a)|b)+\1', '(?<=(a)\1)b', '(?<=([ab]){2})\1', '(?<=(a))\1', '(?<!(a)\1)b', '(a)(?<=\1)b'] as $re) {
+        foreach (['^(?:(?<n>a)|b)+\k<n>$', '(?:(a)|b)+\1', '(?<=(a)\1)b', '(?<=([ab]){2})\1', '(?<=(a))\1', '(?<!(a)\1)b', '(a)(?<=\1)b',
+            '(a)*x\1', '(a){0,2}x\1',   // JS drops an empty iteration, captures included; PCRE keeps it and overwrites the capture
+            '(a?)*x\1', '(a|)*x\1', '(a*)*x\1', '(a?){0,2}x\1', '(a|b?)*\1', '(b*)*x\1', '(b|)*x\1',
+            '(?=(a))?a\1', '(?:(?=(a)))?a\1', '(?=(a)){0,1}a\1', '(?:(?=(a))|b)?a\1', '(?:(?=(a))b?)?a\1', '(?=(a))?\1', '(?<a>x)(?=(?<b>y))?y\k<b>', '(?<n>(?=(a))?)a\2', '(?:(?=(a))a|(?=(b)))?b?\1\2'] as $re) {
             self::assertNull(Regex::compile($re), $re);
         }
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^(?:' . $re . ')$'), $v);   // node: new RegExp('^(?:' + re + ')$')
         foreach ([['(a|b)\1', 'aa', true], ['(a|b)\1', 'bb', true], ['(a|b)\1', 'ab', false], ['(a)+\1', 'aaa', true], ['(?:(a)\1)+', 'aaaa', true], ['(?<n>a)\k<n>', 'aa', true],
             ['(?:(a)|b)\1', 'aa', true], ['(?:(a)|b)\1', 'b', true], ['(?:(a)|b)\1', 'ba', false], ['(?:(a)|b)\1', 'a', false],
             ['(a)?x\1', 'x', true], ['(a)?x\1', 'axa', true], ['(a)?x\1', 'ax', false], ['(a)?x\1', 'aax', false],
-            ['(a)*x\1', 'x', true], ['(a)*x\1', 'aaxa', true], ['(a)*x\1', 'aax', false], ['(a){0,2}x\1', 'x', true], ['(a){0,2}x\1', 'aaxa', true], ['(a){0,2}x\1', 'aax', false],
+            ['(a?)?x\1', 'ax', false], ['(a?)?x\1', 'x', true], ['(a*)?x\1', 'aax', false], ['(?=(a)?)a\1', 'aa', true], ['(?=(?:(a))?)a\1', 'aa', true],
             ['(a){00}x\1', 'x', true], ['(a){00}x\1', 'axa', false], ['(?!(a))\1b', 'b', true], ['(?!(a))\1b', 'ab', false], ['(a)|b\1', 'a', true], ['(a)|b\1', 'b', true], ['(a)|b\1', 'ba', false],
             ['(?:\1(a))+', 'aa', true], ['(?:\1(a))+', 'x', false], ['(a\1)', 'a', true], ['(a\1)', 'aa', false], ['\1(a)', 'a', true], ['\1(a)', 'aa', false],
             ['(?<q>["\'])?x\k<q>', 'x', true], ['(?<q>["\'])?x\k<q>', '"x"', true], ['(?<q>["\'])?x\k<q>', '"x', false], ['(?<q>["\'])?x\k<q>', "'x'", true], ['(?<q>["\'])?x\k<q>', "'x\"", false],
