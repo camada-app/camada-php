@@ -225,7 +225,10 @@ ASN, country or a TLS fingerprint against a request, and resolves ASN and countr
 Enforcement at this position covers ip, path, user-agent and header conditions — ASN, country
 and TLS entries fail open in-app. `matches` patterns are JS regexes read by PCRE without the `u`
 flag (named groups and `\cX` are native, `[^]` is translated, `\d`/`\w`/`\b` stay ASCII); a
-spelling PCRE still rejects never matches here, while it does at the edge.
+spelling PCRE still rejects never matches here, while it does at the edge. A non-ASCII character is
+2-4 bytes here and one UTF-16 unit at the edge, so a pattern that counts characters around one (`^.$`,
+`.{2}`, `[^a]`, a backreference to a captured `.`) can disagree, and under the `i` flag only ASCII letters
+fold (`é` does not match `É`); literal text, `.*` and classes of ASCII agree.
 
 ## Deploying it
 

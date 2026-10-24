@@ -312,6 +312,29 @@ final class ParseTest extends TestCase
         self::assertNull(Regex::compile('(?<a-b>x)\k<a-b>'));   // not a JS identifier
     }
 
+    public function testOtherIdStartAndContinueNamesCompile(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^(?:' . $re . ')$'), $v);
+        foreach ([['(?<℘>x)\k<℘>', 'xx', true], ['(?<℘>x)\k<℘>', 'xy', false], ['(?<a·b>x)\k<a·b>', 'xx', true], ['(?<a·b>x)\k<a·b>', 'xy', false]] as [$re, $v, $want]) {
+            self::assertNotNull(Regex::compile($re), $re);
+            self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
+        }
+        self::assertNull(Regex::compile('(?<·a>x)\k<·a>'));   // U+00B7 is ID_Continue only: a SyntaxError in JS, fails open
+    }
+
+    public function testByteModeNonAsciiGapIsPinned(): void   // an accepted gap, camada-all-mx0s: node gives the opposite on each false/true below
+    {
+        $t = static fn (string $re, string $v, string $f = ''): bool => Regex::test(Regex::compile($re, $f), $v);
+        self::assertFalse($t('^.$', 'é'));   // node: true
+        self::assertTrue($t('^..$', 'é'));   // node: false
+        self::assertFalse($t('(.)\1', 'éé'));   // node: true
+        self::assertFalse($t('^é$', 'É', 'i'));   // node: true
+        self::assertFalse($t('(?<名>é)\k<名>', 'éÉ', 'i'));   // node: true
+        self::assertTrue($t('^é$', 'é'));   // agree
+        self::assertTrue($t('^.*$', 'éé'));
+        self::assertTrue($t('^[a-z]+$', 'abc'));
+    }
+
     public function testUnclosedKNameScanIsLinear(): void
     {
         $re = str_repeat('\k<', 20000) . '>';   // no named group: JS reads it as the text "k<k<...>"
