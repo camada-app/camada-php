@@ -329,6 +329,7 @@ final class ParseTest extends TestCase
             ['(\x41)+x\1', 'AxA', true], ['(\x41)+x\1', 'Ax', false],
             ['(b*){2}x\1', 'bbx', true], ['(b*){2}x\1', 'bxb', true], ['(b*){2}x\1', 'bx', true], ['(b*){2}x\1', 'bxbb', false],   // an exact count has no optional iteration
             ['(b*){2,2}x\1', 'bbx', true], ['(b*){2,2}x\1', 'bxb', true], ['(b*){2,2}x\1', 'bxbb', false], ['(?:(b*)){3}x\1', 'bbx', true],
+            ['(b*){3}x\1', 'bxb', true], ['(b*){3}x\1', 'bbxbb', true], ['(b*){3}x\1', 'xb', false],
             ['(a*){2}x\1', 'axa', true], ['(a*){2}x\1', 'axb', false], ['(?:(a?)\1)+', 'aa', true], ['(?:(a?)\1)+', '', true], ['(?:(a?)\1)+', 'a', false]] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);   // the reference in the last rows sits inside the repeat: it reads its own iteration
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
