@@ -315,7 +315,7 @@ final class ParseTest extends TestCase
     public function testOtherIdStartAndContinueNamesCompile(): void
     {
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^(?:' . $re . ')$'), $v);
-        foreach ([['(?<℘>x)\k<℘>', 'xx', true], ['(?<℘>x)\k<℘>', 'xy', false], ['(?<a·b>x)\k<a·b>', 'xx', true], ['(?<a·b>x)\k<a·b>', 'xy', false]] as [$re, $v, $want]) {
+        foreach ([['(?<℘>x)\k<℘>', 'xx', true], ['(?<℘>x)\k<℘>', 'xy', false], ['(?<a·b>x)\k<a·b>', 'xx', true], ['(?<a·b>x)\k<a·b>', 'xy', false], ['(?<a・b>x)\k<a・b>', 'xx', true]] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
         }
