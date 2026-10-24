@@ -210,6 +210,12 @@ final class ParseTest extends TestCase
         self::assertTrue($t('^admin$', 'admin'));
         self::assertTrue(Regex::test(Regex::compile('^admin$', 'i'), 'ADMIN'));
         self::assertFalse(Regex::test(Regex::compile('^admin$', 'i'), "Admin\n"));
+        self::assertNull(Regex::compile('^[\u0020-\u00FF]+$'));
+        self::assertFalse($t('^[\u0020-\u00FF]+$', '日本'));
+        self::assertNull(Regex::compile('[\u0080-\u00FF]'));
+        self::assertFalse($t('[\u0080-\u00FF]', '日'));
+        self::assertTrue($t('^\u007a$', 'z'));
+        self::assertTrue($t('^z$', 'z'));
         foreach ([
             ['^\p{L}$', 'p{L}', true], ['^\p{L}$', 'A', false],
             ['^\x{41}$', 'A', false], ['^\x{2}$', 'xx', true],
