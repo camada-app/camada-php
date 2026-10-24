@@ -243,6 +243,18 @@ final class ParseTest extends TestCase
         }
     }
 
+    public function testClassBracketIsLiteralAsJsReadsIt(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
+        self::assertNotNull(Regex::compile('[[:alpha:]]'));
+        foreach ([   // JS has no POSIX or nested classes (checked against node): `[[:alpha:]]` is {[ : a l p h} then `]`
+            ['[[:alpha:]]', 'b', false], ['[[:alpha:]]', 'a]', true], ['[[:alpha:]]', ':]', true],
+            ['[a[b]]', 'a]', true], ['[a[b]]', 'b', false],
+        ] as [$re, $v, $want]) {
+            self::assertSame($want, $t($re, $v), "$re vs $v");
+        }
+    }
+
     public function testJsDotEmptyClassAndWhitespaceMatchJs(): void
     {
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
