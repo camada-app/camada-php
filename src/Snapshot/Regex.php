@@ -106,8 +106,8 @@ final class Regex
                 $inClass = $ch !== ']';
                 if ($ch === '-' && ($i === $pullEnd || $i === $soloEnd || preg_match('/\G-\\\\[sS]/', $pattern, $unused, 0, $i) === 1)) {
                     if ($i === $pullEnd) {   // JS reads the atom after that dash as standalone: a dash right after it is text too
-                        preg_match(self::JS_ATOM, $pattern, $m, 0, $i + 1);
-                        $soloEnd = $i + 1 + strlen($m[0]);
+                        // no atom when the pattern ends on the dash
+                        $soloEnd = preg_match(self::JS_ATOM, $pattern, $m, 0, $i + 1) === 1 ? $i + 1 + strlen($m[0]) : strlen($pattern);
                     }
                     $ch = '\\-';   // JS reads `[a-\sz]` and `[a\s-z]` as a, -, whitespace, z
                 }
