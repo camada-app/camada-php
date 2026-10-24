@@ -238,6 +238,24 @@ final class ParseTest extends TestCase
         }
     }
 
+    public function testJsDotEmptyClassAndWhitespaceMatchJs(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
+        foreach ([
+            ['^.$', "\r", false], ['^.$', "\n", false], ['^.$', "\u{2028}", false], ['^.$', "\u{2029}", false], ['^.$', 'a', true],
+            ['^a.b$', "a\rb", false], ['^.*$', "a\u{2028}b", false], ['^[.]$', 'a', false], ['^\.$', '.', true],
+            ['^[]a]$', 'a', false], ['^[]a]$', ']', false], ['^[]a]$', 'a]', false], ['[]a]', 'a]', false],
+            ['^[^]x]$', 'qx]', true], ['a[]*b', 'ab', true], ['^a]$', 'a]', true],
+            ['^\s$', "\u{00a0}", true], ['^\s$', "\u{2028}", true], ['^\s$', "\u{feff}", true], ['^\s$', "\x1c", false],
+            ['^\S$', "\u{00a0}", false], ['^\S+$', 'ab', true], ['^\S+$', 'é', true], ['^\S+$', "a\u{00a0}", false],
+            ['^[a\s]$', "\u{2028}", true], ['^[^a\s]$', "\u{00a0}", false], ['^[^a\s]$', 'b', true], ['^[^\S]$', "\u{00a0}", true],
+            ['^[a-\sz]$', '-', true], ['^[a-\sz]$', 'm', false], ['^[a\s-z]$', 'm', false], ['^[\s^]$', '^', true], ['^[\s/]$', '/', true],
+        ] as [$re, $v, $want]) {
+            self::assertNotNull(Regex::compile($re), $re);
+            self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
+        }
+    }
+
     public function testNonJsBraceIsTextNotABound(): void
     {
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^' . $re . '$'), $v);
