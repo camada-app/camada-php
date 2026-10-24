@@ -282,6 +282,8 @@ final class Regex
      * an atom that must consume input (`solid`: a literal, `.`, a class or a letter escape not followed by a min-0 quantifier,
      * or a non-nullable group) and whether the body can match empty (`nullable`: a branch without one, or a lookaround). Anything
      * unsure counts as nullable, which only fails open; a reference inside the repeating frame reads its own iteration's capture and stays.
+     * A plain reference to a group under a positive lookahead that holds an optional-iteration frame with a nullable body also fails
+     * open: JS rejects that empty iteration, so the lookahead's first success, and the capture it keeps, differs from PCRE's.
      */
     private static function scanGroups(string $p): array
     {
@@ -391,8 +393,14 @@ final class Regex
         }
         $inLb = $unset = $repAbove = $inLa = [false];   // per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
         $rn = [-1];   // per frame: end of the innermost frame at or above it that repeats and can match empty, -1 if none
-        foreach (array_slice($frames, 1) as $fr) {
+        $holds = array_map(static fn ($fr) => ($fr['min0'] || $fr['rep']) && $fr['nullable'], $frames);   // a nullable optional-iteration frame at or below
+        for ($x = count($frames) - 1; $x > 0; --$x) {
+            $holds[$frames[$x]['parent']] = $holds[$frames[$x]['parent']] || $holds[$x];
+        }
+        $laDiv = [false];   // a positive lookahead at or above holds such a frame
+        foreach (array_slice($frames, 1, null, true) as $x => $fr) {
             $par = $frames[$fr['parent']];
+            $laDiv[] = ($fr['la'] && $holds[$x]) || $laDiv[$fr['parent']];
             $inLb[] = $fr['lb'] || $inLb[$fr['parent']];
             $unset[] = $fr['min0'] || $fr['neg'] || $par['alt'] || $unset[$fr['parent']];
             $repAbove[] = $par['rep'] || $repAbove[$fr['parent']];
@@ -413,7 +421,7 @@ final class Regex
             }
             if ($frames[$g]['end'] < 0 || $frames[$g]['end'] > $at) {
                 $marks[$at] = [$end, false];
-            } elseif ($rn[$g] >= 0 && $rn[$g] < $at) {   // JS keeps the capture of an earlier iteration past an empty one, PCRE overwrites it
+            } elseif (($rn[$g] >= 0 && $rn[$g] < $at) || $laDiv[$g]) {   // JS keeps the capture of an earlier iteration past an empty one, PCRE overwrites it
                 return [true, [], []];
             } elseif ($unset[$g]) {
                 if ($repAbove[$g] || $frames[$g]['rep'] || $inLa[$g]) {   // JS drops an empty iteration, captures included; PCRE keeps it
