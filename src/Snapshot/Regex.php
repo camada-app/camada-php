@@ -331,6 +331,9 @@ final class Regex
                     $quiet = ($gt = strpos($p, '>', $i)) === false ? $n : $gt + 1;
                 } else {
                     $quiet = $i + ($q ? (($p[$i + 2] ?? '') === '<' ? 4 : 3) : 1);
+                    if ($q && !in_array($p[$i + 2] ?? '', [':', '=', '!', '<'], true)) {   // modifier flags `(?i:`: no atoms up to the `:`
+                        $quiet = ($co = strpos($p, ':', $i)) === false ? $n : $co + 1;
+                    }
                 }
                 if ($cap) {
                     $groups[] = [count($frames) - 1, $q ? ($gm !== null ? $gm[1] : '') : null];
