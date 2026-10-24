@@ -51,6 +51,7 @@ final class Regex
     private const OTHER_ID_START = '\x{1885}\x{1886}\x{2118}\x{212E}\x{309B}\x{309C}';   // ID_Start beyond \p{L}\p{Nl} (PCRE2 < 10.40 has no \p{ID_Start})
     private const JS_NAME = '/^(?!.*\x{2E2F})[\p{L}\p{Nl}$_' . self::OTHER_ID_START . '][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}$\x{200C}\x{200D}' . self::OTHER_ID_START
         . '\x{00B7}\x{0387}\x{1369}-\x{1371}\x{19DA}\x{30FB}\x{FF65}]*\z/u';   // a JS group name: ID_Start then ID_Continue, plus $ _ ZWNJ ZWJ; U+2E2F is \p{Lm} but not an ID char
+    private const JS_ESC = '/\G\\\\(?:c[A-Za-z]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|0[0-7]{0,2}|[\x00-\x7F]|[\xC0-\xFF][\x80-\xBF]*)/';   // one escape, as long as JS reads it
     private const MAX_REP = '65535';   // PCRE2's quantifier ceiling (JS has none)
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
@@ -254,6 +255,12 @@ final class Regex
         return $out;
     }
 
+    /** Does the text at $j open a min-0 quantifier (`?`, `*`, `{0}` `{0,}` `{0,m}`)? */
+    private static function min0At(string $p, int $j): bool
+    {
+        return in_array($p[$j] ?? '', ['?', '*'], true) || (($p[$j] ?? '') === '{' && preg_match(self::JS_BRACE, $p, $b, 0, $j) === 1 && self::cmp($b[1], '0') === 0);
+    }
+
     /**
      * @return array{bool, array<int, array{int, bool}>, array<string, string>} [the pattern must fail open, {reference offset =>
      * [its end, true for a conditional, false for `(?:)`]}, {group name => ordinal ASCII name}]: one escape- and class-aware walk
@@ -263,46 +270,101 @@ final class Regex
      * (JS resets captures per iteration and refuses an empty one, PCRE keeps them) or it sits inside a positive lookahead (JS rejects an empty
      * optional iteration and tries paths in another order, a lookahead keeps its first): fail open. A name that is no JS identifier fails open. Frames are
      * created in `(` order, so one forward pass gives each its inherited flags and every reference is classified in O(1).
+     * A plain reference (group closed before it) also fails open when the group or an ancestor that closes before the reference
+     * repeats and can match empty: JS rejects an empty iteration once the minimum is met and keeps the previous capture, PCRE
+     * takes it and overwrites the capture with ''. The same walk tracks per frame whether the current alternation branch holds
+     * an atom that must consume input (`solid`: a literal, `.`, a class or a letter escape not followed by a min-0 quantifier,
+     * or a non-nullable group) and whether the body can match empty (`nullable`: a branch without one, or a lookaround). Anything
+     * unsure counts as nullable, which only fails open; a reference inside the repeating frame reads its own iteration's capture and stays.
      */
     private static function scanGroups(string $p): array
     {
         if (preg_match('/\\\\(?:[1-9]|k)|\(\?<[^=!]/', $p) !== 1) {
             return [false, [], []];
         }
-        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int, rep: bool, la: bool}> $frames  end is -1 while open */
-        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1, 'rep' => false, 'la' => false]];
+        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int, rep: bool, la: bool, solid: bool, nullable: bool}> $frames  end is -1 while open */
+        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1, 'rep' => false, 'la' => false, 'solid' => false, 'nullable' => false]];
         [$stack, $groups, $refs, $marks] = [[0], [], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset, end, frame]
-        [$n, $inClass] = [strlen($p), false];
-        for ($i = 0; $i < $n; $i++) {
+        [$n, $inClass, $quiet] = [strlen($p), false, 0];   // bytes before $quiet (a group header, a `\k<name>`) are no atoms
+        for ($i = 0; $i < $n;) {
             $ch = $p[$i];
+            $top = $stack[count($stack) - 1];
             if ($ch === '\\') {
-                if (!$inClass && preg_match(self::JS_REF, $p, $m, 0, $i) === 1) {
-                    $refs[] = [$m[2] ?? $m[1], !isset($m[2]), $i, strlen($m[0]) + $i, $stack[count($stack) - 1]];
+                if ($inClass) {
+                    $i += 2;
+                    continue;
                 }
-                $i++;
-            } elseif ($inClass) {
+                if (preg_match(self::JS_REF, $p, $m, 0, $i) === 1) {
+                    $refs[] = [$m[2] ?? $m[1], !isset($m[2]), $i, strlen($m[0]) + $i, $top];
+                    if ($p[$i + 1] === 'k') {
+                        $quiet = $i + strlen($m[0]);   // the name may hold structure chars the walk must still see
+                        $i += 2;
+                    } else {
+                        $i += strlen($m[0]);
+                    }
+                    continue;
+                }
+                $m = [];
+                $j = preg_match(self::JS_ESC, $p, $m, 0, $i) === 1 ? $i + strlen($m[0]) : $n;
+                if (isset($m[0]) && !in_array($m[0], ['\\b', '\\B', '\\c', '\\k'], true) && !self::min0At($p, $j)) {
+                    $frames[$top]['solid'] = true;
+                }
+                $i = $j;
+                continue;
+            }
+            if ($inClass) {
                 $inClass = $ch !== ']';
+                if (!$inClass && !self::min0At($p, $i + 1)) {
+                    $frames[$top]['solid'] = true;
+                }
             } elseif ($ch === '[') {
                 $inClass = true;
             } elseif ($ch === '(') {
                 $q = ($p[$i + 1] ?? '') === '?';
                 $cap = !$q || (($p[$i + 2] ?? '') === '<' && !in_array($p[$i + 3] ?? '', ['=', '!'], true));
-                $frames[] = ['parent' => $stack[count($stack) - 1], 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1, 'rep' => false, 'la' => preg_match('/\G\?=/', $p, $unused, 0, $i + 1) === 1];
+                $gm = $q && $cap && preg_match(self::JS_GROUP, $p, $m, 0, $i) === 1 ? $m : null;
+                $frames[] = ['parent' => $top, 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1, 'rep' => false, 'la' => preg_match('/\G\?=/', $p, $unused, 0, $i + 1) === 1, 'solid' => false, 'nullable' => false];
                 $stack[] = count($frames) - 1;
+                if ($gm !== null) {
+                    $quiet = $i + strlen($gm[0]);
+                } elseif ($q && $cap) {   // a name past `<` with a stray `<` or `>`: skip to the first `>`
+                    $quiet = ($gt = strpos($p, '>', $i)) === false ? $n : $gt + 1;
+                } else {
+                    $quiet = $i + ($q ? (($p[$i + 2] ?? '') === '<' ? 4 : 3) : 1);
+                }
                 if ($cap) {
-                    $groups[] = [count($frames) - 1, $q ? (preg_match(self::JS_GROUP, $p, $m, 0, $i) === 1 ? $m[1] : '') : null];
+                    $groups[] = [count($frames) - 1, $q ? ($gm !== null ? $gm[1] : '') : null];
                 }
             } elseif ($ch === '|') {
-                $top = $stack[count($stack) - 1];
-                $frames[$top] = ['alt' => true] + $frames[$top];
+                $frames[$top]['alt'] = true;
+                $frames[$top]['nullable'] = $frames[$top]['nullable'] || !$frames[$top]['solid'];
+                $frames[$top]['solid'] = false;
             } elseif ($ch === ')' && count($stack) > 1) {
                 $f = array_pop($stack);
                 $isB = preg_match(self::JS_BRACE, $p, $b, 0, $i + 1) === 1;
                 $min0 = in_array($p[$i + 1] ?? '', ['?', '*'], true) || ($isB && self::cmp($b[1], '0') === 0);
                 $rep = in_array($p[$i + 1] ?? '', ['+', '*'], true)
                     || ($isB && (($b[2] ?? '') !== '' && ($b[3] ?? '') === '' || self::cmp(($b[3] ?? '') === '' ? $b[1] : $b[3], '1') > 0));   // {n,} {n} n>1 {n,m} m>1
-                $frames[$f] = ['end' => $i, 'min0' => $min0, 'rep' => $rep] + $frames[$f];
+                $fr = $frames[$f];
+                $nullable = $fr['nullable'] || !$fr['solid'] || $fr['neg'] || $fr['lb'] || $fr['la'];
+                $frames[$f] = ['end' => $i, 'min0' => $min0, 'rep' => $rep, 'nullable' => $nullable] + $fr;
+                if (!$nullable && !$min0) {
+                    $frames[$fr['parent']]['solid'] = true;
+                }
+            } elseif (!in_array($ch, ['^', '$', ')', '?', '*', '+'], true) && $i >= $quiet) {
+                if ($ch === '{' && preg_match(self::JS_BRACE, $p, $b, 0, $i) === 1) {   // a quantifier, no atom
+                    $i += strlen($b[0]);
+                    continue;
+                }
+                $len = ($o = ord($ch)) >= 0xF0 ? 4 : ($o >= 0xE0 ? 3 : ($o >= 0xC0 ? 2 : 1));   // one UTF-8 char is one atom
+                for ($k = 1; $k < $len && ($c = $p[$i + $k] ?? '') !== '' && (ord($c) & 0xC0) === 0x80; $k++) {
+                }
+                $i += $k - 1;
+                if (!self::min0At($p, $i + 1)) {
+                    $frames[$top]['solid'] = true;
+                }
             }
+            $i++;
         }
         $names = [];
         foreach ($groups as $k => [, $name]) {
@@ -318,12 +380,14 @@ final class Regex
             $ord[$name] = 'n' . (count($ord) + 1);   // every name is mapped: none collides with another, PCRE's 32-char limit never binds
         }
         $inLb = $unset = $repAbove = $inLa = [false];   // per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
+        $rn = [-1];   // per frame: end of the innermost frame at or above it that repeats and can match empty, -1 if none
         foreach (array_slice($frames, 1) as $fr) {
             $par = $frames[$fr['parent']];
             $inLb[] = $fr['lb'] || $inLb[$fr['parent']];
             $unset[] = $fr['min0'] || $fr['neg'] || $par['alt'] || $unset[$fr['parent']];
             $repAbove[] = $par['rep'] || $repAbove[$fr['parent']];
             $inLa[] = $fr['la'] || $inLa[$fr['parent']];
+            $rn[] = $fr['rep'] && $fr['nullable'] ? $fr['end'] : $rn[$fr['parent']];
         }
         foreach ($refs as [$ref, $isName, $at, $end, $rf]) {
             if ($isName && $names !== [] && !isset($names[$ref])) {
@@ -339,6 +403,8 @@ final class Regex
             }
             if ($frames[$g]['end'] < 0 || $frames[$g]['end'] > $at) {
                 $marks[$at] = [$end, false];
+            } elseif ($rn[$g] >= 0 && $rn[$g] < $at) {   // JS keeps the capture of an earlier iteration past an empty one, PCRE overwrites it
+                return [true, [], []];
             } elseif ($unset[$g]) {
                 if ($repAbove[$g] || $frames[$g]['rep'] || $inLa[$g]) {   // JS drops an empty iteration, captures included; PCRE keeps it
                     return [true, [], []];
