@@ -203,6 +203,30 @@ final class ParseTest extends TestCase
         self::assertNull($m2->match(new MatchInput(ua: 'ab'))->rule);
     }
 
+    public function testNonJsBraceIsTextNotABound(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^' . $re . '$'), $v);
+        self::assertTrue($t('a{,3}', 'a{,3}'));
+        self::assertFalse($t('a{,3}', 'aa'));
+        self::assertTrue($t('a{,}', 'a{,}'));
+        self::assertFalse($t('a{,}', 'aaa'));
+        self::assertTrue($t('a{1,3}', 'aaa'));
+        self::assertTrue($t('[{,3}]', ','));
+        self::assertTrue($t('\{,3}', '{,3}'));
+        self::assertTrue($t('x{', 'x{'));
+        self::assertTrue($t('[^]{,2}', 'z{,2}'));
+        foreach (['a{ ,3}', 'a{1, 3}', 'a{1,3 }', 'a{ 1 }', 'a{ 1}'] as $re) {   // PCRE2 10.43+ reads these as bounds, JS as text
+            self::assertTrue($t($re, $re), $re);
+            self::assertFalse($t($re, 'a'), $re);
+        }
+        self::assertNull(Regex::compile('a{2,1}'));
+        $m = self::rulesSnapshot([['id' => 'r', 'action' => 'block', 'conds' => [['f' => 'ua', 'op' => 'matches', 'v' => '.{,2000}.{,2000}.{,2000}!']]]]);
+        $t0 = hrtime(true);
+        $rule = $m->match(new MatchInput(ua: '!' . str_repeat('a', 2047), path: '/x'))->rule;
+        self::assertNull($rule);
+        self::assertLessThan(100_000_000, hrtime(true) - $t0);
+    }
+
     public function testOneMatcherServesInterleavedRequestsWithoutCrosstalk(): void
     {
         $a = (10 << 24) | 1;
