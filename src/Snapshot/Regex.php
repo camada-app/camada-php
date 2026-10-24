@@ -20,11 +20,12 @@ namespace Camada\Snapshot;
  */
 final class Regex
 {
+    private const JS_ATOM = '/\G(?:\\\\(?:c[A-Za-z]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|[\s\S])|[\s\S])/';   // one class atom
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
-    private const NWS = '(?:(?!' . self::WS . ')[\s\S])';
-    private const DOT = '(?:(?!\xE2\x80[\xA8\xA9])[^\n\r])';   // JS . (PCRE's excludes only \n)
+    private const NWS = '(?:[^\t-\r \xC2\xE1-\xE3\xEF]|(?!' . self::WS . ')[\xC2\xE1-\xE3\xEF])';
+    private const DOT = '(?:[^\n\r\xE2]|\xE2(?!\x80[\xA8\xA9]))';   // JS . (PCRE's excludes only \n)
 
     /** The delimited PCRE pattern, or null when this runtime rejects the spelling. `$flags` is 'i' for a path regex (§D3 "Path matching"). */
     public static function compile(string $js, string $flags = ''): ?string
@@ -97,8 +98,8 @@ final class Regex
                 $inClass = $ch !== ']';
                 if ($ch === '-' && ($i === $pullEnd || $i === $soloEnd || preg_match('/\G-\\\\[sS]/', $pattern, $unused, 0, $i) === 1)) {
                     if ($i === $pullEnd) {   // JS reads the atom after that dash as standalone: a dash right after it is text too
-                        $esc = ($pattern[$i + 1] ?? '') === '\\';
-                        $soloEnd = $i + ($esc ? (preg_match(self::JS_ESCAPE, $pattern, $m, 0, $i + 2) === 1 ? 2 + strlen($m[0]) : 3) : 2);
+                        preg_match(self::JS_ATOM, $pattern, $m, 0, $i + 1);
+                        $soloEnd = $i + 1 + strlen($m[0]);
                     }
                     $ch = '\\-';   // JS reads `[a-\sz]` and `[a\s-z]` as a, -, whitespace, z
                 }
@@ -139,13 +140,14 @@ final class Regex
         if ($neg && in_array(self::NWS, $alts, true)) {   // `[^…\S]` is whitespace, a whole UTF-8 char, outside the body
             return $out . (in_array(self::WS, $alts, true) ? '(?!)' : ($cls === '' ? self::WS : "(?:(?!$cls)" . self::WS . ')'));
         }
-        if ($cls !== '') {
-            array_unshift($alts, $cls);
-        }
+        $alts = array_values(array_filter([   // WS first: a multibyte space goes whole
+            in_array(self::WS, $alts, true) ? self::WS : '',
+            $cls,
+            in_array(self::NWS, $alts, true) ? self::NWS : '',
+        ], static fn ($a) => $a !== ''));
         if ($neg) {
             return $out . '(?:(?!' . implode('|', $alts) . ')[\\s\\S])';
         }
-        usort($alts, static fn ($a, $b) => [$b === self::WS, $a === self::NWS] <=> [$a === self::WS, $b === self::NWS]);   // WS first: a multibyte space goes whole
         return $out . (count($alts) > 1 ? '(?>' . implode('|', $alts) . ')' : $alts[0]);
     }
 }
