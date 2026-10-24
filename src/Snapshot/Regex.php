@@ -51,7 +51,8 @@ final class Regex
     private const OTHER_ID_START = '\x{1885}\x{1886}\x{2118}\x{212E}\x{309B}\x{309C}';   // ID_Start beyond \p{L}\p{Nl} (PCRE2 < 10.40 has no \p{ID_Start})
     private const JS_NAME = '/^(?!.*\x{2E2F})[\p{L}\p{Nl}$_' . self::OTHER_ID_START . '][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}$\x{200C}\x{200D}' . self::OTHER_ID_START
         . '\x{00B7}\x{0387}\x{1369}-\x{1371}\x{19DA}\x{30FB}\x{FF65}]*\z/u';   // a JS group name: ID_Start then ID_Continue, plus $ _ ZWNJ ZWJ; U+2E2F is \p{Lm} but not an ID char
-    private const JS_ESC = '/\G\\\\(?:c[A-Za-z]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|0[0-7]{0,2}|[\x00-\x7F]|[\xC0-\xFF][\x80-\xBF]*)/';   // one escape, as long as JS reads it
+    private const UTF8_CHAR = '[\x00-\x7F]|[\xC0-\xFF][\x80-\xBF]*';   // one UTF-8 char: an ASCII byte, or a lead byte and its continuations
+    private const JS_ESC = '/\G\\\\(?:c[A-Za-z]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|0[0-7]{0,2}|' . self::UTF8_CHAR . ')/';   // one escape, as long as JS reads it
     private const MAX_REP = '65535';   // PCRE2's quantifier ceiling (JS has none)
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
@@ -304,10 +305,13 @@ final class Regex
                     }
                     continue;
                 }
-                $m = [];
-                $j = preg_match(self::JS_ESC, $p, $m, 0, $i) === 1 ? $i + strlen($m[0]) : $i + 2;
-                if (isset($m[0]) && !in_array($m[0], ['\\b', '\\B', '\\c', '\\k'], true) && !self::min0At($p, $j)) {
-                    $frames[$top]['solid'] = true;
+                if (preg_match(self::JS_ESC, $p, $m, 0, $i) === 1) {
+                    $j = $i + strlen($m[0]);
+                    if (!in_array($m[0], ['\\b', '\\B', '\\c', '\\k'], true) && !self::min0At($p, $j)) {
+                        $frames[$top]['solid'] = true;
+                    }
+                } else {
+                    $j = $i + 2;
                 }
                 $i = $j;
                 continue;
@@ -346,7 +350,7 @@ final class Regex
             } elseif ($ch === ')' && count($stack) > 1) {
                 $f = array_pop($stack);
                 $isB = preg_match(self::JS_BRACE, $p, $b, 0, $i + 1) === 1;
-                $min0 = in_array($p[$i + 1] ?? '', ['?', '*'], true) || ($isB && self::cmp($b[1], '0') === 0);
+                $min0 = self::min0At($p, $i + 1);
                 $rep = in_array($p[$i + 1] ?? '', ['+', '*'], true)
                     || ($isB && (($b[2] ?? '') !== '' && ($b[3] ?? '') === '' || self::cmp(($b[3] ?? '') === '' ? $b[1] : $b[3], '1') > 0));   // {n,} {n} n>1 {n,m} m>1
                 $fr = $frames[$f];
@@ -360,10 +364,7 @@ final class Regex
                     $i += strlen($b[0]);
                     continue;
                 }
-                $len = ($o = ord($ch)) >= 0xF0 ? 4 : ($o >= 0xE0 ? 3 : ($o >= 0xC0 ? 2 : 1));   // one UTF-8 char is one atom
-                for ($k = 1; $k < $len && ($c = $p[$i + $k] ?? '') !== '' && (ord($c) & 0xC0) === 0x80; $k++) {
-                }
-                $i += $k - 1;
+                $i += preg_match('/\G(?:' . self::UTF8_CHAR . ')/', $p, $m, 0, $i) === 1 ? strlen($m[0]) - 1 : 0;   // one UTF-8 char is one atom
                 if (!self::min0At($p, $i + 1)) {
                     $frames[$top]['solid'] = true;
                 }
