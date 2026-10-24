@@ -14,7 +14,8 @@ namespace Camada\Snapshot;
  * (`\p{L}` is "p{L}", `\A` is "A"); ASCII `\u00HH` (below 0x80) becomes `\xHH` and `\v` becomes `\x0B`. At byte
  * level, as JS reads them: `.` excludes \n \r U+2028 U+2029 (DOT); `[]` never matches (`(?!)`, a `]` right after
  * `[`/`[^` closes the class, a stray `]` is text); `\s`/`\S` are JS's Unicode whitespace (WS/NWS), and inside a class
- * they become a union with the rest of it, a `-` beside one staying a literal dash. A pattern
+ * they become a union with the rest of it (atomic, WS first, so a char matches one way only: no ReDoS), a `-` beside one
+ * staying a literal dash, as does a `-` right after the atom that follows it. A pattern
  * PCRE still rejects never matches and never throws — and never surfaces a warning (fail open).
  */
 final class Regex
@@ -50,7 +51,7 @@ final class Regex
         $out = '';
         $n = strlen($pattern);
         $inClass = false;
-        [$start, $neg, $pulled, $pullEnd] = [0, false, [], -1];   // the open class: its `[` offset in $out, negation, \s/\S pulled out
+        [$start, $neg, $pulled, $pullEnd, $soloEnd] = [0, false, [], -1, -1];   // the open class: its `[` offset in $out, negation, \s/\S pulled out, where the last one ended, where the atom after its dash ended
         $named = preg_match('/\(\?<(?![=!])/', $pattern) === 1;
         for ($i = 0; $i < $n;) {
             $ch = $pattern[$i];
@@ -94,7 +95,11 @@ final class Regex
                     continue;
                 }
                 $inClass = $ch !== ']';
-                if ($ch === '-' && ($i === $pullEnd || preg_match('/\G-\\\\[sS]/', $pattern, $unused, 0, $i) === 1)) {
+                if ($ch === '-' && ($i === $pullEnd || $i === $soloEnd || preg_match('/\G-\\\\[sS]/', $pattern, $unused, 0, $i) === 1)) {
+                    if ($i === $pullEnd) {   // JS reads the atom after that dash as standalone: a dash right after it is text too
+                        $esc = ($pattern[$i + 1] ?? '') === '\\';
+                        $soloEnd = $i + ($esc ? (preg_match(self::JS_ESCAPE, $pattern, $m, 0, $i + 2) === 1 ? 2 + strlen($m[0]) : 3) : 2);
+                    }
                     $ch = '\\-';   // JS reads `[a-\sz]` and `[a\s-z]` as a, -, whitespace, z
                 }
             } elseif ($ch === '.' || $ch === ']') {
@@ -137,7 +142,10 @@ final class Regex
         if ($cls !== '') {
             array_unshift($alts, $cls);
         }
-        $u = implode('|', $alts);
-        return $out . ($neg ? "(?:(?!$u)[\\s\\S])" : (count($alts) > 1 ? "(?:$u)" : $u));
+        if ($neg) {
+            return $out . '(?:(?!' . implode('|', $alts) . ')[\\s\\S])';
+        }
+        usort($alts, static fn ($a, $b) => [$b === self::WS, $a === self::NWS] <=> [$a === self::WS, $b === self::NWS]);   // WS first: a multibyte space goes whole
+        return $out . (count($alts) > 1 ? '(?>' . implode('|', $alts) . ')' : $alts[0]);
     }
 }

@@ -250,10 +250,18 @@ final class ParseTest extends TestCase
             ['^\S$', "\u{00a0}", false], ['^\S+$', 'ab', true], ['^\S+$', 'é', true], ['^\S+$', "a\u{00a0}", false],
             ['^[a\s]$', "\u{2028}", true], ['^[^a\s]$', "\u{00a0}", false], ['^[^a\s]$', 'b', true], ['^[^\S]$', "\u{00a0}", true],
             ['^[a-\sz]$', '-', true], ['^[a-\sz]$', 'm', false], ['^[a\s-z]$', 'm', false], ['^[\s^]$', '^', true], ['^[\s/]$', '/', true],
+            ['^[\s-a-z]$', 'b', false], ['^[\s-a-z]$', '-', true], ['^[\s-a-z]$', 'z', true], ['^[\s-\x41-z]$', 'b', false],
+            ['^[\s-\d-z]$', 'b', false], ['^[\s-ab-z]$', 'c', true], ['^[a-\s-z]$', 'b', false], ['^[ \s]$', "\u{2003}", true],
         ] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
         }
+    }
+
+    public function testOverlappingClassUnionDoesNotBacktrackExponentially(): void
+    {
+        self::assertFalse(Regex::test(Regex::compile('^[ \s]+x'), str_repeat(' ', 3000), true));
+        self::assertSame(PREG_NO_ERROR, preg_last_error());
     }
 
     public function testNonJsBraceIsTextNotABound(): void
