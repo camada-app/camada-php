@@ -203,6 +203,41 @@ final class ParseTest extends TestCase
         self::assertNull($m2->match(new MatchInput(ua: 'ab'))->rule);
     }
 
+    public function testJsIdentityEscapesAndDollarMatchJs(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
+        self::assertFalse($t('^admin$', "admin\n"));
+        self::assertTrue($t('^admin$', 'admin'));
+        self::assertTrue(Regex::test(Regex::compile('^admin$', 'i'), 'ADMIN'));
+        self::assertFalse(Regex::test(Regex::compile('^admin$', 'i'), "Admin\n"));
+        self::assertNull(Regex::compile('^[\u0020-\u00FF]+$'));
+        self::assertFalse($t('^[\u0020-\u00FF]+$', '日本'));
+        self::assertNull(Regex::compile('[\u0080-\u00FF]'));
+        self::assertFalse($t('[\u0080-\u00FF]', '日'));
+        self::assertTrue($t('^\u007a$', 'z'));
+        self::assertTrue($t('^z$', 'z'));
+        foreach ([
+            ['^\p{L}$', 'p{L}', true], ['^\p{L}$', 'A', false],
+            ['^\x{41}$', 'A', false], ['^\x{2}$', 'xx', true],
+            ['^\u{41}$', 'A', false], ['^\u{2}$', 'uu', true],
+            ['^\o{101}$', 'A', false], ['^\o{2}$', 'oo', true],
+            ['^\g{1}$', 'g', true], ['^\g{1}$', 'gg', false],
+            ['^\Qa.b$', 'Qa.b', true], ['^\Qa.b$', 'Qaxb', true],
+            ['^a{2}?$', '', false], ['^a{2}?$', 'aa', true],
+            ['^\A\z$', 'Az', true], ['^\e$', 'e', true], ['^\h$', 'h', true],
+            ['^\x4$', 'x4', true], ['\x4', 'x4', true], ['^\x41$', 'A', true], ['^A$', 'A', true],
+            ['^\u0041$', 'A', true], ['^\u41$', 'u41', true],
+            ['^\k$', 'k', true], ['(?<n>a)\k<n>', 'aa', true],
+            ['^[\B]$', 'B', true], ['^[\p]$', 'p', true], ['^[\b]$', "\x08", true],
+            ['^\d\w\s$', '1a ', true],
+            ['^\c1$', '\c1', true], ['^\c$', '\c', true],
+            ['^\v$', "\v", true], ['^\v$', "\n", false],
+        ] as [$re, $v, $want]) {
+            self::assertNotNull(Regex::compile($re), $re);
+            self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
+        }
+    }
+
     public function testNonJsBraceIsTextNotABound(): void
     {
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^' . $re . '$'), $v);
