@@ -428,7 +428,7 @@ final class ParseTest extends TestCase
     public function testSpaceInsideALookbehindStaysFixedLength(): void
     {
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
-        self::assertSame('/(?<=\s)a/D', Regex::compile('(?<=\s)a'));
+        self::assertSame('/(*LIMIT_MATCH=500000)(?<=\s)a/D', Regex::compile('(?<=\s)a'));
         self::assertTrue($t('(?<=\s)a', ' a'));
         self::assertTrue($t('(?<![a\s])b', 'cb'));
         self::assertFalse($t('(?<![a\s])b', ' b'));
