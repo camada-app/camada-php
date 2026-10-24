@@ -24,8 +24,8 @@ final class Regex
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
-    private const NWS = '(?:[^\t-\r \xC2\xE1-\xE3\xEF]|(?!' . self::WS . ')[\xC2\xE1-\xE3\xEF])';
-    private const DOT = '(?:[^\n\r\xE2]|\xE2(?!\x80[\xA8\xA9]))';   // JS . (PCRE's excludes only \n)
+    private const NWS = '(?:(?!' . self::WS . ')[^\t-\r ])';   // one byte, unless a WS char starts here (an alternation per char overflows the JIT stack on `.*` at ~5 KB)
+    private const DOT = '(?:(?!\xE2\x80[\xA8\xA9])[^\n\r])';   // JS . (PCRE's excludes only \n)
 
     /** The delimited PCRE pattern, or null when this runtime rejects the spelling. `$flags` is 'i' for a path regex (§D3 "Path matching"). */
     public static function compile(string $js, string $flags = ''): ?string
@@ -44,6 +44,9 @@ final class Regex
             return false;
         }
         $r = @preg_match($compiled, $value);
+        if (preg_last_error() === PREG_JIT_STACKLIMIT_ERROR) {   // the interpreter keeps its stack on the heap
+            $r = @preg_match('/(*NO_JIT)' . substr($compiled, 1), $value);
+        }
         return $r === false || preg_last_error() !== PREG_NO_ERROR ? $onFailure : $r === 1;
     }
 
@@ -53,6 +56,7 @@ final class Regex
         $n = strlen($pattern);
         $inClass = false;
         [$start, $neg, $pulled, $pullEnd, $soloEnd] = [0, false, [], -1, -1];   // the open class: its `[` offset in $out, negation, \s/\S pulled out, where the last one ended, where the atom after its dash ended
+        $groups = [];   // open groups, true for a lookbehind: `\s` there stays native (WS is 1-3 bytes; PCRE2 < 10.43 wants a fixed length)
         $named = preg_match('/\(\?<(?![=!])/', $pattern) === 1;
         for ($i = 0; $i < $n;) {
             $ch = $pattern[$i];
@@ -60,7 +64,10 @@ final class Regex
                 $c = $pattern[$i + 1];
                 if ($c === 's' || $c === 'S') {
                     $set = $c === 's' ? self::WS : self::NWS;
-                    if ($inClass) {
+                    if (in_array(true, $groups, true)) {
+                        $out .= '\\' . $c;
+                        $pullEnd = $inClass ? $i + 2 : $pullEnd;
+                    } elseif ($inClass) {
                         [$pulled[], $pullEnd] = [$set, $i + 2];
                     } else {
                         $out .= $set;
@@ -119,6 +126,10 @@ final class Regex
                 $out .= substr($pattern, $i, $j - $i);
                 $i = $j;
                 continue;
+            } elseif ($ch === '(') {
+                $groups[] = preg_match('/\G\(\?<[=!]/', $pattern, $unused, 0, $i) === 1;
+            } elseif ($ch === ')') {
+                array_pop($groups);
             } elseif ($ch === '{' && preg_match('/\G\{[0-9]+(?:,[0-9]*)?\}/', $pattern, $unused, 0, $i) !== 1) {
                 $out .= '\\{';
                 $i++;

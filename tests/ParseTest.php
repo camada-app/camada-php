@@ -265,6 +265,24 @@ final class ParseTest extends TestCase
         self::assertSame(PREG_NO_ERROR, preg_last_error());
     }
 
+    public function testDotAndNonSpaceSurviveLongInputs(): void
+    {
+        self::assertTrue(Regex::test(Regex::compile('^/admin/.*'), '/admin/' . str_repeat('a', 8200)));
+        self::assertFalse(Regex::test(Regex::compile('^(.)*[xyz]$'), str_repeat('あ', 2048), true));
+        self::assertTrue(Regex::test(Regex::compile('^\S*$'), str_repeat('あ', 4096), true));
+    }
+
+    public function testSpaceInsideALookbehindStaysFixedLength(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
+        self::assertSame('/(?<=\s)a/D', Regex::compile('(?<=\s)a'));
+        self::assertTrue($t('(?<=\s)a', ' a'));
+        self::assertTrue($t('(?<![a\s])b', 'cb'));
+        self::assertFalse($t('(?<![a\s])b', ' b'));
+        self::assertTrue($t('(?<name>\s)b', ' b'));
+        self::assertTrue($t('(?<=x)\s(?<n>a)', "x\u{00a0}a"));   // outside the lookbehind, \s is still Unicode
+    }
+
     public function testNonJsBraceIsTextNotABound(): void
     {
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^' . $re . '$'), $v);
