@@ -15,9 +15,8 @@ namespace Camada\Snapshot;
  * level, as JS reads them: `.` excludes \n \r U+2028 U+2029 (DOT); `[]` never matches (`(?!)`, a `]` right after
  * `[`/`[^` closes the class, a stray `]` is text); `\s`/`\S` are JS's Unicode whitespace (WS/NWS), and inside a class
  * they become a union with the rest of it (atomic, WS first, so a char matches one way only: no ReDoS), a `-` beside one
- * staying a literal dash, as does a `-` right after the atom that follows it.
- * A match never starts inside a multibyte char (START); so outside a class `\xHH` above 0x7F is U+00HH's UTF-8 (`\xE9` is
- * `\xC3\xA9`), in a class it stays a byte. Inside a lookbehind `\s`/`\S` stay PCRE's
+ * staying a literal dash, as does a `-` right after the atom that follows it. An atom never starts inside a whitespace or
+ * line-terminator char (a lookbehind refuses its continuation bytes). Inside a lookbehind `\s`/`\S` stay PCRE's
  * ASCII ones (WS is 1-3 bytes and PCRE2 < 10.43 needs a fixed-length lookbehind). A pattern
  * PCRE still rejects never matches and never throws — and never surfaces a warning (fail open).
  */
@@ -27,16 +26,16 @@ final class Regex
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
-    private const NWS = '(?:(?!' . self::WS . ')[^\t-\r ])';   // one byte, unless a WS char starts here (an alternation per char overflows the JIT stack on `.*` at ~5 KB)
-    private const DOT = '(?:(?!\xE2\x80[\xA8\xA9])[^\n\r])';   // JS . (PCRE's excludes only \n)
-
-    private const DOT_BEHIND = '(?:[^\n\r](?<!\xE2\x80[\xA8\xA9]))';   // DOT in a lookbehind, which START does not guard: refuses the last byte of U+2028/9
-    private const START = '(?<![\xC0-\xFF]|[\xE0-\xFF][\x80-\xBF]|[\xF0-\xFF][\x80-\xBF]{2})';   // a match never starts inside a multibyte UTF-8 char
+    private const LS = '\xE2\x80[\xA8\xA9]';
+    private const IN_WS = '(?<!(?=' . self::WS . ')[\xC0-\xFF]|(?=' . self::WS . ')[\xE0-\xFF][\x80-\xBF])';   // refuses a byte strictly inside a WS char: one starts 1 byte back, or a 3-byte one 2 back
+    private const IN_LS = '(?<!(?=' . self::LS . ')[\xC0-\xFF]|(?=' . self::LS . ')[\xE0-\xFF][\x80-\xBF])';   // the same for U+2028/9
+    private const NWS = '(?:(?!' . self::WS . ')' . self::IN_WS . '[^\t-\r ])';   // one byte, unless a WS char starts here or covers it (an alternation per char overflows the JIT stack on `.*` at ~5 KB)
+    private const DOT = '(?:(?!' . self::LS . ')' . self::IN_LS . '[^\n\r])';   // JS . (PCRE's excludes only \n)
 
     /** The delimited PCRE pattern, or null when this runtime rejects the spelling. `$flags` is 'i' for a path regex (§D3 "Path matching"). */
     public static function compile(string $js, string $flags = ''): ?string
     {
-        $p = '/' . self::START . '(?:' . self::translate($js) . ')/D' . $flags;
+        $p = '/' . self::translate($js) . '/D' . $flags;
         return @preg_match($p, '') === false ? null : $p;
     }
 
@@ -81,12 +80,6 @@ final class Regex
                     $i += 2;
                     continue;
                 }
-                if (!$inClass && preg_match('/\Gx([89a-fA-F][0-9a-fA-F])/', $pattern, $m, 0, $i + 1) === 1) {
-                    $h = hexdec($m[1]);
-                    $out .= '(?:\\x' . ($h < 0xC0 ? 'C2\\x' . $m[1] : 'C3\\x' . strtoupper(dechex($h - 0x40))) . ')';   // U+00HH as UTF-8
-                    $i += 4;
-                    continue;
-                }
                 if (preg_match('/\Gu00([0-7][0-9a-fA-F])/', $pattern, $m, 0, $i + 1) === 1) {
                     $out .= '\\x' . $m[1];   // PCRE has no `\u`; only ASCII maps (no u flag: \x80+ is a byte), \u0080 and up stay `\u` and fail open
                     $i += 6;
@@ -123,7 +116,7 @@ final class Regex
                     $ch = '\\-';   // JS reads `[a-\sz]` and `[a\s-z]` as a, -, whitespace, z
                 }
             } elseif ($ch === '.' || $ch === ']') {
-                $out .= $ch === '.' ? (in_array(true, $groups, true) ? self::DOT_BEHIND : self::DOT) : '\\]';
+                $out .= $ch === '.' ? self::DOT : '\\]';
                 $i++;
                 continue;
             } elseif ($ch === '[') {
@@ -169,7 +162,7 @@ final class Regex
             in_array(self::NWS, $alts, true) ? self::NWS : '',
         ], static fn ($a) => $a !== ''));
         if ($neg) {
-            return $out . '(?:(?!' . implode('|', $alts) . ')[\\s\\S])';
+            return $out . '(?:(?!' . implode('|', $alts) . ')' . self::IN_WS . '[\\s\\S])';
         }
         return $out . (count($alts) > 1 ? '(?>' . implode('|', $alts) . ')' : $alts[0]);
     }
