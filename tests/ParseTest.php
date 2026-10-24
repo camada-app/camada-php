@@ -265,7 +265,8 @@ final class ParseTest extends TestCase
 
     public function testBackreferenceToAGroupThatMayNotHaveCapturedFailsOpen(): void
     {
-        foreach (['^(?:(?<n>a)|b)+\k<n>$', '(?<q>["\'])?x\k<q>', '\1(a)', '(a\1)', '(?:(a)|b)\1', '(a)?x\1', '(a)*x\1', '(a){0,2}x\1', '(a){00}x\1', '(?!(a))\1b', '(a)|b\1', '(?:\1(a))+'] as $re) {
+        foreach (['^(?:(?<n>a)|b)+\k<n>$', '(?<q>["\'])?x\k<q>', '\1(a)', '(a\1)', '(?:(a)|b)\1', '(a)?x\1', '(a)*x\1', '(a){0,2}x\1', '(a){00}x\1', '(?!(a))\1b', '(a)|b\1', '(?:\1(a))+',
+            '(?<=(a)\1)b', '(?<=([ab]){2})\1', '(?<=(a))\1', '(?<!(a)\1)b', '(a)(?<=\1)b', '(?<m>)|\k<n>', 'a|\k<n>(?<n>b)'] as $re) {
             self::assertNull(Regex::compile($re), $re);
         }
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
@@ -274,6 +275,17 @@ final class ParseTest extends TestCase
             self::assertNotNull(Regex::compile($re), $re);
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
         }
+    }
+
+    public function testUnclosedKNameScanIsLinear(): void
+    {
+        $re = str_repeat('\k<', 20000) . '>';   // no named group: JS reads it as the text "k<k<...>"
+        $t0 = microtime(true);
+        $c = Regex::compile($re);
+        self::assertLessThan(2.0, microtime(true) - $t0);
+        self::assertTrue($c === null || Regex::test($c, str_repeat('k<', 20000) . '>'));   // PCRE itself rejects 20000 literals ("Internal error"): fail open
+        self::assertTrue(Regex::test(Regex::compile('\k<\k<\k<>'), 'k<k<k<>'));
+        self::assertTrue(Regex::test(Regex::compile(str_repeat('\k<', 5000) . '>'), str_repeat('k<', 5000) . '>'));
     }
 
     public function testClassBracketIsLiteralAsJsReadsIt(): void
