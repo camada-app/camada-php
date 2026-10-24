@@ -263,6 +263,19 @@ final class ParseTest extends TestCase
         }
     }
 
+    public function testBackreferenceToAGroupThatMayNotHaveCapturedFailsOpen(): void
+    {
+        foreach (['^(?:(?<n>a)|b)+\k<n>$', '(?<q>["\'])?x\k<q>', '\1(a)', '(a\1)', '(?:(a)|b)\1', '(a)?x\1', '(a)*x\1', '(a){0,2}x\1', '(a){00}x\1', '(?!(a))\1b', '(a)|b\1', '(?:\1(a))+'] as $re) {
+            self::assertNull(Regex::compile($re), $re);
+        }
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
+        foreach ([['(a|b)\1', 'aa', true], ['(a|b)\1', 'bb', true], ['(a|b)\1', 'ab', false], ['(a)+\1', 'aaa', true], ['(?:(a)\1)+', 'aaaa', true], ['(?<n>a)\k<n>', 'aa', true],
+            ['[(?<]\k<n>', '(k<n>', true], ['\(?<n>x', '(<n>x', true], ['[\1](a)', "\x01a", true]] as [$re, $v, $want]) {
+            self::assertNotNull(Regex::compile($re), $re);
+            self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
+        }
+    }
+
     public function testClassBracketIsLiteralAsJsReadsIt(): void
     {
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
