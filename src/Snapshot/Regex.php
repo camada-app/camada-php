@@ -11,7 +11,7 @@ namespace Camada\Snapshot;
  * (`{,3}`, `{ 1}`) becomes `\{` (JS reads it as text, PCRE as a bound); the delimiter is escaped.
  * `$` ends the subject only (the `D` modifier: PCRE also matches it before a trailing newline, JS
  * does not). `\<letter>` outside JS's escape set is the bare letter, as JS reads it without `u`
- * (`\p{L}` is "p{L}", `\A` is "A"); `\u00HH` becomes `\xHH` and `\v` becomes `\x0B`. A pattern
+ * (`\p{L}` is "p{L}", `\A` is "A"); ASCII `\u00HH` (below 0x80) becomes `\xHH` and `\v` becomes `\x0B`. A pattern
  * PCRE still rejects never matches and never throws — and never surfaces a warning (fail open).
  */
 final class Regex
@@ -48,8 +48,8 @@ final class Regex
             $ch = $pattern[$i];
             if ($ch === '\\' && $i + 1 < $n) {
                 $c = $pattern[$i + 1];
-                if (preg_match('/\Gu00([0-9a-fA-F]{2})/', $pattern, $m, 0, $i + 1) === 1) {
-                    $out .= '\\x' . $m[1];   // PCRE has no `\u`; a code unit above \xFF stays `\u` and fails open
+                if (preg_match('/\Gu00([0-7][0-9a-fA-F])/', $pattern, $m, 0, $i + 1) === 1) {
+                    $out .= '\\x' . $m[1];   // PCRE has no `\u`; only ASCII maps (no u flag: \x80+ is a byte), \u0080 and up stay `\u` and fail open
                     $i += 6;
                     continue;
                 }
