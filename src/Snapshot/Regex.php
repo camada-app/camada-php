@@ -7,7 +7,8 @@ namespace Camada\Snapshot;
 /**
  * Tenant patterns are authored as JS regexes (the analyst validates them with `new RegExp`) and
  * read here by PCRE without the `u` flag, so \d \w \b stay ASCII as JS reads them. `(?<name>`
- * and `\cX` are native; `[^]` (any char) becomes `[\s\S]`; the delimiter is escaped. A pattern
+ * and `\cX` are native; `[^]` (any char) becomes `[\s\S]`; a `{` that is no JS quantifier
+ * (`{,3}`, `{ 1}`) becomes `\{` (JS reads it as text, PCRE as a bound); the delimiter is escaped. A pattern
  * PCRE still rejects never matches and never throws — and never surfaces a warning (fail open).
  */
 final class Regex
@@ -58,6 +59,10 @@ final class Regex
                     continue;
                 }
                 $inClass = true;
+            } elseif ($ch === '{' && preg_match('/\G\{[0-9]+(?:,[0-9]*)?\}/', $pattern, $unused, 0, $i) !== 1) {
+                $out .= '\\{';
+                $i++;
+                continue;
             }
             $out .= $ch;
             $i++;
