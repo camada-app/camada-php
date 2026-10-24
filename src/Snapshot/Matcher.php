@@ -314,13 +314,19 @@ final class Matcher
         $forms = Path::forms($i->path);
         if ($s->rules !== []) {
             $r = new RuleRequest(n4: $n4, ip6: $w, asn: $i->asn, country: $i->country, tlsx: $i->tlsx, paths: $forms, ua: $i->ua, header: $i->header);
-            foreach ($s->rules as $rule) {   // the order IS the precedence (§A4): first match wins
-                foreach ($rule->conds as $cond) {
-                    if (!$cond($r)) {
-                        continue 2;
+            $hit = Regex::withBudget(static function () use ($s, $r): ?CompiledRule {
+                foreach ($s->rules as $rule) {   // the order IS the precedence (§A4): first match wins
+                    foreach ($rule->conds as $cond) {
+                        if (!$cond($r)) {
+                            continue 2;
+                        }
                     }
+                    return $rule;
                 }
-                return self::ruleResult($rule, $s->version);
+                return null;
+            });
+            if ($hit instanceof CompiledRule) {
+                return self::ruleResult($hit, $s->version);
             }
         }
         $reason = self::side($s->allow, $i, $n4, $w, $forms, false);
