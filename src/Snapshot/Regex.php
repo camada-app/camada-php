@@ -40,6 +40,13 @@ final class Regex
 {
     private const JS_ATOM = '/\G(?:\\\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|(?!c)[\s\S])|[\s\S])/';   // one class atom
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
+    /** PCRE2 match-limit steps per run, set in the pattern so no host ini is touched (PREG_BACKTRACK_LIMIT_ERROR past it). */
+    public const MATCH_LIMIT = 500000;
+    /** Regex time one request's rule walk may spend; once spent, a run answers `$onFailure` unrun. */
+    public const REQUEST_REGEX_BUDGET_MS = 100;
+    /** @internal tests only: the budget a walk opens, in ms (steps are not time). */
+    public static int $walkBudgetMs = self::REQUEST_REGEX_BUDGET_MS;
+    private static ?int $budgetNs = null;   // left in the open walk; null when none is active
     private const JS_BRACE = '/\G\{([0-9]+)(?:(,)([0-9]*))?\}/';   // a JS {m}, {m,} or {m,n}
     private const JS_REF = '/\G\\\\(?:k<([^<>]+)>|([1-9][0-9]*))/';   // a backreference: \k<name> or \N
     private const JS_GROUP = '/\G\(\?<([^<>]*)>/';   // a named group's opener: a JS name holds no `<` or `>`
@@ -62,12 +69,24 @@ final class Regex
         if ($diverges) {
             return null;
         }
-        $p = '/' . self::translate($js, $marks, $names) . '/D' . $flags;
+        $p = '/(*LIMIT_MATCH=' . self::MATCH_LIMIT . ')' . self::translate($js, $marks, $names) . '/D' . $flags;
         if (@preg_match($p, '') !== false) {
             return $p;
         }
         $p = str_replace([self::IN_WS, self::IN_LS], '', $p);   // the guards triple each atom's size: a huge repeat keeps byte atoms rather than fail open
         return @preg_match($p, '') === false ? null : $p;
+    }
+
+    /** Runs `$walk` (one request's rule walk) under a fresh request regex budget, reset afterwards. */
+    public static function withBudget(callable $walk): mixed
+    {
+        $prev = self::$budgetNs;
+        self::$budgetNs = self::$walkBudgetMs * 1_000_000;
+        try {
+            return $walk();
+        } finally {
+            self::$budgetNs = $prev;
+        }
     }
 
     /**
@@ -79,9 +98,16 @@ final class Regex
         if ($compiled === null) {
             return false;
         }
+        if (self::$budgetNs !== null && self::$budgetNs <= 0) {
+            return $onFailure;   // the request's regex time is spent: answer like an over-cap value
+        }
+        $t = hrtime(true);
         $r = @preg_match($compiled, $value);
         if (preg_last_error() === PREG_JIT_STACKLIMIT_ERROR) {   // the interpreter keeps its stack on the heap
             $r = @preg_match('/(*NO_JIT)' . substr($compiled, 1), $value);
+        }
+        if (self::$budgetNs !== null) {
+            self::$budgetNs -= hrtime(true) - $t;
         }
         return $r === false || preg_last_error() !== PREG_NO_ERROR ? $onFailure : $r === 1;
     }
