@@ -236,8 +236,8 @@ final class Regex
         if (preg_match('/\\\\(?:[1-9]|k)|\(\?<[^=!]/', $p) !== 1) {
             return [false, [], []];
         }
-        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int, rep: bool}> $frames  end is -1 while open */
-        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1, 'rep' => false]];
+        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int, rep: bool, la: bool}> $frames  end is -1 while open */
+        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1, 'rep' => false, 'la' => false]];
         [$stack, $groups, $refs, $marks] = [[0], [], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset, end, frame]
         [$n, $inClass] = [strlen($p), false];
         for ($i = 0; $i < $n; $i++) {
@@ -254,7 +254,7 @@ final class Regex
             } elseif ($ch === '(') {
                 $q = ($p[$i + 1] ?? '') === '?';
                 $cap = !$q || (($p[$i + 2] ?? '') === '<' && !in_array($p[$i + 3] ?? '', ['=', '!'], true));
-                $frames[] = ['parent' => $stack[count($stack) - 1], 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1, 'rep' => false];
+                $frames[] = ['parent' => $stack[count($stack) - 1], 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1, 'rep' => false, 'la' => preg_match('/\G\?=/', $p, $unused, 0, $i + 1) === 1];
                 $stack[] = count($frames) - 1;
                 if ($cap) {
                     $groups[] = [count($frames) - 1, $q ? (preg_match(self::JS_GROUP, $p, $m, 0, $i) === 1 ? $m[1] : '') : null];
@@ -284,12 +284,14 @@ final class Regex
             }
             $ord[$name] = 'n' . (count($ord) + 1);   // every name is mapped: none collides with another, PCRE's 32-char limit never binds
         }
-        $inLb = $unset = $repAbove = [false];   // per frame: a lookbehind at or above, may be unset, a strict ancestor repeats
+        $inLb = $unset = $repAbove = $min0Up = $laMin0 = [false];   // per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a min-0 quantifier at or above, a positive lookahead under one at or above
         foreach (array_slice($frames, 1) as $fr) {
             $par = $frames[$fr['parent']];
             $inLb[] = $fr['lb'] || $inLb[$fr['parent']];
             $unset[] = $fr['min0'] || $fr['neg'] || $par['alt'] || $unset[$fr['parent']];
             $repAbove[] = $par['rep'] || $repAbove[$fr['parent']];
+            $min0Up[] = $fr['min0'] || $min0Up[$fr['parent']];
+            $laMin0[] = ($fr['la'] && $min0Up[count($min0Up) - 1]) || $laMin0[$fr['parent']];
         }
         foreach ($refs as [$ref, $isName, $at, $end, $rf]) {
             if ($isName && $names !== [] && !isset($names[$ref])) {
@@ -306,7 +308,7 @@ final class Regex
             if ($frames[$g]['end'] < 0 || $frames[$g]['end'] > $at) {
                 $marks[$at] = [$end, false];
             } elseif ($unset[$g]) {
-                if ($repAbove[$g]) {
+                if ($repAbove[$g] || $frames[$g]['rep'] || $laMin0[$g]) {   // JS drops an empty iteration, captures included; PCRE keeps it
                     return [true, [], []];
                 }
                 $marks[$at] = [$end, true];
