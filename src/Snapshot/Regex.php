@@ -15,7 +15,8 @@ namespace Camada\Snapshot;
  * level, as JS reads them: `.` excludes \n \r U+2028 U+2029 (DOT); `[]` never matches (`(?!)`, a `]` right after
  * `[`/`[^` closes the class, a stray `]` is text); `\s`/`\S` are JS's Unicode whitespace (WS/NWS), and inside a class
  * they become a union with the rest of it (atomic, WS first, so a char matches one way only: no ReDoS), a `-` beside one
- * staying a literal dash, as does a `-` right after the atom that follows it. Inside a lookbehind `\s`/`\S` stay PCRE's
+ * staying a literal dash, as does a `-` right after the atom that follows it. An atom never starts inside a whitespace or
+ * line-terminator char (a lookbehind refuses its continuation bytes). Inside a lookbehind `\s`/`\S` stay PCRE's
  * ASCII ones (WS is 1-3 bytes and PCRE2 < 10.43 needs a fixed-length lookbehind). A pattern
  * PCRE still rejects never matches and never throws — and never surfaces a warning (fail open).
  */
@@ -25,8 +26,11 @@ final class Regex
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
-    private const NWS = '(?:(?!' . self::WS . ')[^\t-\r ])';   // one byte, unless a WS char starts here (an alternation per char overflows the JIT stack on `.*` at ~5 KB)
-    private const DOT = '(?:(?!\xE2\x80[\xA8\xA9])[^\n\r])';   // JS . (PCRE's excludes only \n)
+    private const LS = '\xE2\x80[\xA8\xA9]';
+    private const IN_WS = '(?<!(?=' . self::WS . ')[\xC0-\xFF]|(?=' . self::WS . ')[\xE0-\xFF][\x80-\xBF])';   // refuses a byte strictly inside a WS char: one starts 1 byte back, or a 3-byte one 2 back
+    private const IN_LS = '(?<!(?=' . self::LS . ')[\xC0-\xFF]|(?=' . self::LS . ')[\xE0-\xFF][\x80-\xBF])';   // the same for U+2028/9
+    private const NWS = '(?:(?!' . self::WS . ')' . self::IN_WS . '[^\t-\r ])';   // one byte, unless a WS char starts here or covers it (an alternation per char overflows the JIT stack on `.*` at ~5 KB)
+    private const DOT = '(?:(?!' . self::LS . ')' . self::IN_LS . '[^\n\r])';   // JS . (PCRE's excludes only \n)
 
     /** The delimited PCRE pattern, or null when this runtime rejects the spelling. `$flags` is 'i' for a path regex (§D3 "Path matching"). */
     public static function compile(string $js, string $flags = ''): ?string
@@ -158,7 +162,7 @@ final class Regex
             in_array(self::NWS, $alts, true) ? self::NWS : '',
         ], static fn ($a) => $a !== ''));
         if ($neg) {
-            return $out . '(?:(?!' . implode('|', $alts) . ')[\\s\\S])';
+            return $out . '(?:(?!' . implode('|', $alts) . ')' . self::IN_WS . '[\\s\\S])';
         }
         return $out . (count($alts) > 1 ? '(?>' . implode('|', $alts) . ')' : $alts[0]);
     }
