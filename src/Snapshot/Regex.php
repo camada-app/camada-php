@@ -290,8 +290,8 @@ final class Regex
         if (preg_match('/\\\\(?:[1-9]|k)|\(\?<[^=!]/', $p) !== 1) {
             return [false, [], []];
         }
-        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int, rep: bool, la: bool, solid: bool, nullable: bool}> $frames  end is -1 while open */
-        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1, 'rep' => false, 'la' => false, 'solid' => false, 'nullable' => false]];
+        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int, rep: bool, la: bool, solid: bool, nullable: bool, holds: bool}> $frames  end is -1 while open */
+        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1, 'rep' => false, 'la' => false, 'solid' => false, 'nullable' => false, 'holds' => false]];
         [$stack, $groups, $refs, $marks] = [[0], [], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset, end, frame]
         [$n, $inClass, $quiet] = [strlen($p), false, 0];   // bytes before $quiet (a group header, a `\k<name>`) are no atoms
         for ($i = 0; $i < $n;) {
@@ -334,7 +334,7 @@ final class Regex
                 $q = ($p[$i + 1] ?? '') === '?';
                 $cap = !$q || (($p[$i + 2] ?? '') === '<' && !in_array($p[$i + 3] ?? '', ['=', '!'], true));
                 $gm = $q && $cap && preg_match(self::JS_GROUP, $p, $m, 0, $i) === 1 ? $m : null;
-                $frames[] = ['parent' => $top, 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1, 'rep' => false, 'la' => preg_match('/\G\?=/', $p, $unused, 0, $i + 1) === 1, 'solid' => false, 'nullable' => false];
+                $frames[] = ['parent' => $top, 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1, 'rep' => false, 'la' => preg_match('/\G\?=/', $p, $unused, 0, $i + 1) === 1, 'solid' => false, 'nullable' => false, 'holds' => false];
                 $stack[] = count($frames) - 1;
                 if ($gm !== null) {
                     $quiet = $i + strlen($gm[0]);
@@ -362,7 +362,9 @@ final class Regex
                     || ($isB && (($b[2] ?? '') !== '' && ($b[3] ?? '') === '' || self::cmp(($b[3] ?? '') === '' ? $b[1] : $b[3], '1') > 0));   // {n,} {n} n>1 {n,m} m>1
                 $fr = $frames[$f];
                 $nullable = $fr['nullable'] || !$fr['solid'] || $fr['neg'] || $fr['lb'] || $fr['la'];
-                $frames[$f] = ['end' => $i, 'min0' => $min0, 'rep' => $rep, 'nullable' => $nullable] + $fr;
+                $holds = $fr['holds'] || (($min0 || $rep) && $nullable);   // it or a frame inside it: an optional nullable repeat
+                $frames[$f] = ['end' => $i, 'min0' => $min0, 'rep' => $rep, 'nullable' => $nullable, 'holds' => $holds] + $fr;
+                $frames[$fr['parent']]['holds'] = $frames[$fr['parent']]['holds'] || $holds;
                 if (!$nullable && !$min0) {
                     $frames[$fr['parent']]['solid'] = true;
                 }
@@ -393,14 +395,10 @@ final class Regex
         }
         $inLb = $unset = $repAbove = $inLa = [false];   // per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
         $rn = [-1];   // per frame: end of the innermost frame at or above it that repeats and can match empty, -1 if none
-        $holds = array_map(static fn ($fr) => ($fr['min0'] || $fr['rep']) && $fr['nullable'], $frames);   // a nullable optional-iteration frame at or below
-        for ($x = count($frames) - 1; $x > 0; --$x) {
-            $holds[$frames[$x]['parent']] = $holds[$frames[$x]['parent']] || $holds[$x];
-        }
-        $laDiv = [false];   // a positive lookahead at or above holds such a frame
-        foreach (array_slice($frames, 1, null, true) as $x => $fr) {
+        $laDiv = [false];   // per frame: a positive lookahead at or above holds an optional nullable repeat
+        foreach (array_slice($frames, 1) as $fr) {
             $par = $frames[$fr['parent']];
-            $laDiv[] = ($fr['la'] && $holds[$x]) || $laDiv[$fr['parent']];
+            $laDiv[] = ($fr['la'] && $fr['holds']) || $laDiv[$fr['parent']];
             $inLb[] = $fr['lb'] || $inLb[$fr['parent']];
             $unset[] = $fr['min0'] || $fr['neg'] || $par['alt'] || $unset[$fr['parent']];
             $repAbove[] = $par['rep'] || $repAbove[$fr['parent']];
