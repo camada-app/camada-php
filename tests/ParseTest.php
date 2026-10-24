@@ -217,6 +217,11 @@ final class ParseTest extends TestCase
         self::assertFalse($t('^[\x20-\xff]+$', '日本'));
         self::assertNull(Regex::compile('\xe9'));
         self::assertFalse($t('[\u0080-\u00FF]', '日'));
+        self::assertNull(Regex::compile('^[\040-\377]+$'));   // legacy octal \200-\377 is U+0080-U+00FF in JS, a byte in PCRE
+        self::assertFalse($t('^[\040-\377]+$', '日本'));
+        self::assertNull(Regex::compile('^\377$'));
+        self::assertTrue($t('^[\040-\177]+$', 'abc'));   // below \200 maps as before
+        self::assertTrue($t('^\101$', 'A'));
         self::assertTrue($t('^\u007a$', 'z'));
         self::assertTrue($t('^z$', 'z'));
         foreach ([
