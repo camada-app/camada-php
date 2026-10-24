@@ -260,6 +260,9 @@ final class ParseTest extends TestCase
             ['^[\s-\cA-z]$', 'b', false], ['^[\s-\101-z]$', 'b', false], ['^[\s-\cA-z]$', '-', true],
             ['^[\s-a-z]$', 'b', false], ['^[\s-a-z]$', '-', true], ['^[\s-a-z]$', 'z', true], ['^[\s-\x41-z]$', 'b', false],
             ['^[\s-\d-z]$', 'b', false], ['^[\s-ab-z]$', 'c', true], ['^[a-\s-z]$', 'b', false], ['^[ \s]$', "\u{2003}", true],
+            ['\S', "\u{a0}", false], ['\S', "\u{3000}", false], ['\S', "\u{feff}", false], ['\S', "\u{a0}\u{a0}\u{a0}", false], ['\S', "\u{a0}a", true],
+            ['.', "\u{2028}", false], ['.', "\u{2029}", false], ['.', 'é', true], ['[^\s]', "\u{a0}", false], ['[^a\s]', "\u{a0}", false],
+            ['[a\S]', "\u{a0}", false], ['^\S+$', "\u{a1}", true], ['(?<=.)x', "\u{2028}x", false], ['(?<=.)x', 'éx', true],
         ] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
@@ -286,11 +289,22 @@ final class ParseTest extends TestCase
         self::assertSame(PREG_NO_ERROR, preg_last_error());
     }
 
+    public function testHugeRepeatsFallBackToByteAtomsInsteadOfFailingOpen(): void
+    {
+        foreach (['.{700}', '\S{370}', '[^\s]{450}', '^.{1,255}$'] as $js) {
+            self::assertNotNull(Regex::compile($js), $js);
+        }
+        self::assertTrue(Regex::test(Regex::compile('.{256,}'), str_repeat('a', 300)));
+        self::assertTrue(Regex::test(Regex::compile('^[^\s]{3,200}$'), 'abc'));
+        self::assertFalse(Regex::test(Regex::compile('\S'), "\u{a0}"));   // a normal pattern keeps the guard
+    }
+
     public function testDotAndNonSpaceSurviveLongInputs(): void
     {
         self::assertTrue(Regex::test(Regex::compile('^/admin/.*'), '/admin/' . str_repeat('a', 8200)));
         self::assertFalse(Regex::test(Regex::compile('^(.)*[xyz]$'), str_repeat('あ', 2048), true));
         self::assertTrue(Regex::test(Regex::compile('^\S*$'), str_repeat('あ', 4096), true));
+        self::assertTrue(Regex::test(Regex::compile('^.*$'), str_repeat('é', 5000), true));
     }
 
     public function testSpaceInsideALookbehindStaysFixedLength(): void
