@@ -300,7 +300,7 @@ final class ParseTest extends TestCase
             '(a?)*x\1', '(a|)*x\1', '(a*)*x\1', '(a?){0,2}x\1', '(a|b?)*\1', '(b*)*x\1', '(b|)*x\1',
             '(?=(a))?a\1', '(?:(?=(a)))?a\1', '(?=(a)){0,1}a\1', '(?:(?=(a))|b)?a\1', '(?:(?=(a))b?)?a\1', '(?=(a))?\1', '(?<a>x)(?=(?<b>y))?y\k<b>', '(?<n>(?=(a))?)a\2', '(?:(?=(a))a|(?=(b)))?b?\1\2',
             '(?=(a)?)a\1', '(?=(?:(a))?)a\1', '(?=(a??)?)\1a', '(?=(?:a??)?(b?))a\1', '(?=(?:|a)?(b?))a\1', '(?=(?:a*?)*(b?))a\1', '(?=x(?=(?:a??)?(b?)))xa\1', '(?=(?:a??)?(?<n>b?))a\k<n>', '(?=(?:a??)?(b)?)a\1', '(?=(a*?){0,1})[ab]*\1', '(?=x(?<n>a??(x)*|){0,1})x\k<n>',
-            '(b*)+x\1', '(b|)+x\1', '(a?)+x\1', '\1(b*)+x\1', '(?:(b*))+x\1', '(?<m>b*)+x\k<m>', '(\x41?)+x\1',   // a repeat that can match empty keeps JS's capture
+            '(b*)+x\1', '(b|)+x\1', '(a?)+x\1', '\1(b*)+x\1', '(?:(b*))+x\1', '(?<m>b*)+x\k<m>', '(\x41?)+x\1', '(b*){2,3}x\1', '(b*){2,}x\1', '(?:(b*){2})+x\1', '(?:((?:b+|(?=x))){2}c?)+x\1',   // a repeat that can match empty keeps JS's capture
             '(é?)+x\1', '([a]?)+x\1', '(a{0,2})+x\1', '(a|b?)+\1', '(?<n>)(?<m>a?\k<n>)+x\k<m>',
             '((?i:a?))+x\1', '((?i-m:a?))+x\1', '((?-i:a?))+x\1', '((?m:b*))+x\1', '(?:(?i:(b*)))+x\1', '(?i:(b*))+x\1', '(?<m>(?i:b*))+x\k<m>'] as $re) {
             self::assertNull(Regex::compile($re), $re);
@@ -326,7 +326,10 @@ final class ParseTest extends TestCase
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^(?:' . $re . ')$'), $v);
         foreach ([['(a)+x\1', 'axa', true], ['(a)+x\1', 'axb', false], ['(\w)+\1', 'abb', true], ['(\w)+\1', 'ab', false],
             ['(?:(b)c?)+x\1', 'bcbxb', true], ['(?:(b)c?)+x\1', 'bcbxc', false], ['(a{1,2})+x\1', 'aaxa', true], ['(a{1,2})+x\1', 'ax', false],
-            ['(\x41)+x\1', 'AxA', true], ['(\x41)+x\1', 'Ax', false], ['(?:(a?)\1)+', 'aa', true], ['(?:(a?)\1)+', '', true], ['(?:(a?)\1)+', 'a', false]] as [$re, $v, $want]) {
+            ['(\x41)+x\1', 'AxA', true], ['(\x41)+x\1', 'Ax', false],
+            ['(b*){2}x\1', 'bbx', true], ['(b*){2}x\1', 'bxb', true], ['(b*){2}x\1', 'bx', true], ['(b*){2}x\1', 'bxbb', false],   // an exact count has no optional iteration
+            ['(b*){2,2}x\1', 'bbx', true], ['(b*){2,2}x\1', 'bxb', true], ['(b*){2,2}x\1', 'bxbb', false], ['(?:(b*)){3}x\1', 'bbx', true],
+            ['(a*){2}x\1', 'axa', true], ['(a*){2}x\1', 'axb', false], ['(?:(a?)\1)+', 'aa', true], ['(?:(a?)\1)+', '', true], ['(?:(a?)\1)+', 'a', false]] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);   // the reference in the last rows sits inside the repeat: it reads its own iteration
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
         }
