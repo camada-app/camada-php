@@ -44,8 +44,6 @@ final class Regex
     public const MATCH_LIMIT = 500000;
     /** Regex time one request's rule walk may spend; once spent, a run answers `$onFailure` unrun. */
     public const REQUEST_REGEX_BUDGET_MS = 100;
-    /** @internal tests only: the budget a walk opens, in ms (steps are not time). */
-    public static int $walkBudgetMs = self::REQUEST_REGEX_BUDGET_MS;
     private static ?int $budgetNs = null;   // left in the open walk; null when none is active
     private const JS_BRACE = '/\G\{([0-9]+)(?:(,)([0-9]*))?\}/';   // a JS {m}, {m,} or {m,n}
     private const JS_REF = '/\G\\\\(?:k<([^<>]+)>|([1-9][0-9]*))/';   // a backreference: \k<name> or \N
@@ -80,12 +78,11 @@ final class Regex
     /** Runs `$walk` (one request's rule walk) under a fresh request regex budget, reset afterwards. */
     public static function withBudget(callable $walk): mixed
     {
-        $prev = self::$budgetNs;
-        self::$budgetNs = self::$walkBudgetMs * 1_000_000;
+        self::$budgetNs = self::REQUEST_REGEX_BUDGET_MS * 1_000_000;
         try {
             return $walk();
         } finally {
-            self::$budgetNs = $prev;
+            self::$budgetNs = null;
         }
     }
 

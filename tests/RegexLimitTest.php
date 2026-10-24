@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace Camada\Tests;
 
-use Camada\Snapshot\Matcher;
 use Camada\Snapshot\MatchInput;
-use Camada\Snapshot\MemoryWords;
 use Camada\Snapshot\Parser;
 use Camada\Snapshot\Regex;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -24,14 +22,12 @@ final class RegexLimitTest extends TestCase
         return Fixtures::json(self::VECTORS);
     }
 
-    /** @return iterable<string, array{string, bool}> */
+    /** @return iterable<string, array{array<string, mixed>, bool}> */
     public static function rows(): iterable
     {
-        /** @var list<array<string, mixed>> $rows */
-        $rows = self::vectors()['over_limit'];
         foreach ([false, true] as $jit) {   // PHP caches a compiled pattern with the jit setting of its first use: nojit goes first
-            foreach ($rows as $r) {
-                yield $r['id'] . ($jit ? ' jit' : ' nojit') => [(string) $r['id'], $jit];
+            foreach (self::overLimit() as $r) {
+                yield $r['id'] . ($jit ? ' jit' : ' nojit') => [$r, $jit];
             }
         }
     }
@@ -52,10 +48,7 @@ final class RegexLimitTest extends TestCase
      */
     private static function hits(array $rule, array $input): bool
     {
-        $meta = Fixtures::json('blk5/v5-empty.meta.json');
-        $meta['rules'] = [$rule];
-        $m = new Matcher(Parser::parse(new MemoryWords(Fixtures::bin('blk5/v5-empty.bin')), $meta));
-        $r = $m->match(new MatchInput(
+        $r = ParseTest::rulesSnapshot([$rule])->match(new MatchInput(
             ip: isset($input['ip']) ? (string) $input['ip'] : null,
             path: isset($input['path']) ? self::expand($input['path']) : null,
             ua: isset($input['ua']) ? self::expand($input['ua']) : null,
@@ -74,7 +67,7 @@ final class RegexLimitTest extends TestCase
         $c = self::vectors()['constants'];
         self::assertSame($c['PHP_MATCH_LIMIT'], Regex::MATCH_LIMIT);
         self::assertSame($c['REQUEST_REGEX_BUDGET_MS'], Regex::REQUEST_REGEX_BUDGET_MS);
-        self::assertSame($c['MAX_MATCH_INPUT'], 2048);
+        self::assertSame($c['MAX_MATCH_INPUT'], Parser::MAX_MATCH_INPUT);
         self::assertFalse(Parser::overCap(str_repeat('a', $c['MAX_MATCH_INPUT'])));
         self::assertTrue(Parser::overCap(str_repeat('a', $c['MAX_MATCH_INPUT'] + 1)));
     }
@@ -84,22 +77,16 @@ final class RegexLimitTest extends TestCase
         self::assertStringStartsWith('/(*LIMIT_MATCH=500000)', (string) Regex::compile('a'));
     }
 
+    /** @param array{id: string, rule: array<string, mixed>, input: array<string, mixed>, hit: array<string, bool>} $r */
     #[DataProvider('rows')]
-    public function testOverLimitRowsAnswerLikeOverCap(string $id, bool $jit): void
+    public function testOverLimitRowsAnswerLikeOverCap(array $r, bool $jit): void
     {
         $old = ini_get('pcre.jit');
         ini_set('pcre.jit', $jit ? '1' : '0');
         try {
-            foreach (self::overLimit() as $r) {
-                if ($r['id'] !== $id) {
-                    continue;
-                }
-                /** @var array<string, bool> $hit */
-                $hit = $r['hit'];
-                $t = hrtime(true);
-                self::assertSame($hit['budget'], self::hits($r['rule'], $r['input']), $id);
-                self::assertLessThan(2_000, (hrtime(true) - $t) / 1e6, "$id stopped at the limit");
-            }
+            $t = hrtime(true);
+            self::assertSame($r['hit']['budget'], self::hits($r['rule'], $r['input']), $r['id']);
+            self::assertLessThan(2_000, (hrtime(true) - $t) / 1e6, $r['id'] . ' stopped at the limit');
         } finally {
             ini_set('pcre.jit', (string) $old);
         }
@@ -144,20 +131,13 @@ final class RegexLimitTest extends TestCase
 
     public function testASpentRequestBudgetAnswersOnFailureWithoutRunning(): void
     {
-        $in = ['ip' => '8.8.8.8', 'ua' => 'a'];
-        $deny = ['id' => 'cr_d', 'action' => 'block', 'conds' => [['f' => 'ua', 'op' => 'matches', 'v' => '^b']]];
-        $skip = ['id' => 'cr_s', 'action' => 'skip', 'conds' => [['f' => 'ua', 'op' => 'matches', 'v' => '^a']]];
-        self::assertFalse(self::hits($deny, $in));
-        self::assertTrue(self::hits($skip, $in));
-        Regex::$walkBudgetMs = 0;
-        try {
-            self::assertTrue(self::hits($deny, $in), 'a spent budget fails a deny rule closed');
-            self::assertFalse(self::hits($skip, $in), 'a spent budget never exempts');
-        } finally {
-            Regex::$walkBudgetMs = Regex::REQUEST_REGEX_BUDGET_MS;
-        }
-        self::assertTrue(self::hits($skip, $in), 'the budget is reset after the walk');
-        // outside a walk only the per-match limit applies
-        self::assertTrue(Regex::test(Regex::compile('^a'), 'a'));
+        $hit = Regex::compile('^a');
+        self::assertTrue(Regex::test($hit, 'a'));
+        Regex::withBudget(static function () use ($hit): void {
+            (new \ReflectionProperty(Regex::class, 'budgetNs'))->setValue(null, 0);   // the walk has spent its time
+            self::assertTrue(Regex::test($hit, 'b', true), 'a spent budget fails a deny rule closed');
+            self::assertFalse(Regex::test($hit, 'a'), 'a spent budget never exempts');
+        });
+        self::assertTrue(Regex::test($hit, 'a'), 'the budget is reset after the walk');
     }
 }
