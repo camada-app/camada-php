@@ -132,7 +132,7 @@ final class ParseTest extends TestCase
 
     public function testRegexModifierGroupFailsOpen(): void
     {
-        foreach (['(?:(a{0,2}))((\\b\\3)*?)?(?i:\\1|[^a]*)+?', '(?i:googlebot|bingbot)', '(?-i:a)', '(?s:.)', '(?m:a$)', '(?i-m:a)', 'x(?i:a)'] as $re) {
+        foreach (['(?:(a{0,2}))((\\b\\3)*?)?(?i:\\1|[^a]*)+?', '(?i:googlebot|bingbot)', '(?-i:a)', '(?s:.)', '(?m:a$)', '(?i-m:a)', 'x(?i:a)', '(?i:(a))+x\\1'] as $re) {
             self::assertNull(Regex::compile($re), $re);
         }
         self::assertNull(Regex::compile('(?i:a)', 'i'));
@@ -318,8 +318,7 @@ final class ParseTest extends TestCase
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^(?:' . $re . ')$'), $v);
         foreach ([['(a)+x\1', 'axa', true], ['(a)+x\1', 'axb', false], ['(\w)+\1', 'abb', true], ['(\w)+\1', 'ab', false],
             ['(?:(b)c?)+x\1', 'bcbxb', true], ['(?:(b)c?)+x\1', 'bcbxc', false], ['(a{1,2})+x\1', 'aaxa', true], ['(a{1,2})+x\1', 'ax', false],
-            ['(\x41)+x\1', 'AxA', true], ['(\x41)+x\1', 'Ax', false], ['(?:(a?)\1)+', 'aa', true], ['(?:(a?)\1)+', '', true], ['(?:(a?)\1)+', 'a', false],
-            ['(?i:(a))+x\1', 'axa', true], ['(?i:(a))+x\1', 'AxA', true], ['(?i:(a))+x\1', 'axb', false]] as [$re, $v, $want]) {
+            ['(\x41)+x\1', 'AxA', true], ['(\x41)+x\1', 'Ax', false], ['(?:(a?)\1)+', 'aa', true], ['(?:(a?)\1)+', '', true], ['(?:(a?)\1)+', 'a', false]] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);   // the reference in the last rows sits inside the repeat: it reads its own iteration
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
         }
