@@ -238,6 +238,65 @@ final class ParseTest extends TestCase
         }
     }
 
+    public function testJsDotEmptyClassAndWhitespaceMatchJs(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
+        foreach ([
+            ['^.$', "\r", false], ['^.$', "\n", false], ['^.$', "\u{2028}", false], ['^.$', "\u{2029}", false], ['^.$', 'a', true],
+            ['^a.b$', "a\rb", false], ['^.*$', "a\u{2028}b", false], ['^[.]$', 'a', false], ['^\.$', '.', true],
+            ['^[]a]$', 'a', false], ['^[]a]$', ']', false], ['^[]a]$', 'a]', false], ['[]a]', 'a]', false],
+            ['^[^]x]$', 'qx]', true], ['a[]*b', 'ab', true], ['^a]$', 'a]', true],
+            ['^\s$', "\u{00a0}", true], ['^\s$', "\u{2028}", true], ['^\s$', "\u{feff}", true], ['^\s$', "\x1c", false],
+            ['^\S$', "\u{00a0}", false], ['^\S+$', 'ab', true], ['^\S+$', 'é', true], ['^\S+$', "a\u{00a0}", false],
+            ['^[a\s]$', "\u{2028}", true], ['^[^a\s]$', "\u{00a0}", false], ['^[^a\s]$', 'b', true], ['^[^\S]$', "\u{00a0}", true],
+            ['^[a-\sz]$', '-', true], ['^[a-\sz]$', 'm', false], ['^[a\s-z]$', 'm', false], ['^[\s^]$', '^', true], ['^[\s/]$', '/', true],
+            ['^[\s-\cA-z]$', 'b', false], ['^[\s-\101-z]$', 'b', false], ['^[\s-\cA-z]$', '-', true],
+            ['^[\s-a-z]$', 'b', false], ['^[\s-a-z]$', '-', true], ['^[\s-a-z]$', 'z', true], ['^[\s-\x41-z]$', 'b', false],
+            ['^[\s-\d-z]$', 'b', false], ['^[\s-ab-z]$', 'c', true], ['^[a-\s-z]$', 'b', false], ['^[ \s]$', "\u{2003}", true],
+        ] as [$re, $v, $want]) {
+            self::assertNotNull(Regex::compile($re), $re);
+            self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
+        }
+    }
+
+    public function testUnterminatedClassAfterSDashFailsOpenWithoutWarnings(): void
+    {
+        set_error_handler(static function (int $no, string $str): bool {   // an `@`-suppressed diagnostic is silent; anything else fails
+            (error_reporting() & $no) === 0 || self::fail("PHP diagnostic: $str");
+            return true;
+        });
+        try {
+            self::assertNull(Regex::compile('[a\s-'));
+            self::assertNull(Regex::compile('[\s-'));
+        } finally {
+            restore_error_handler();
+        }
+    }
+
+    public function testOverlappingClassUnionDoesNotBacktrackExponentially(): void
+    {
+        self::assertFalse(Regex::test(Regex::compile('^[ \s]+x'), str_repeat(' ', 3000), true));
+        self::assertSame(PREG_NO_ERROR, preg_last_error());
+    }
+
+    public function testDotAndNonSpaceSurviveLongInputs(): void
+    {
+        self::assertTrue(Regex::test(Regex::compile('^/admin/.*'), '/admin/' . str_repeat('a', 8200)));
+        self::assertFalse(Regex::test(Regex::compile('^(.)*[xyz]$'), str_repeat('あ', 2048), true));
+        self::assertTrue(Regex::test(Regex::compile('^\S*$'), str_repeat('あ', 4096), true));
+    }
+
+    public function testSpaceInsideALookbehindStaysFixedLength(): void
+    {
+        $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
+        self::assertSame('/(?<=\s)a/D', Regex::compile('(?<=\s)a'));
+        self::assertTrue($t('(?<=\s)a', ' a'));
+        self::assertTrue($t('(?<![a\s])b', 'cb'));
+        self::assertFalse($t('(?<![a\s])b', ' b'));
+        self::assertTrue($t('(?<name>\s)b', ' b'));
+        self::assertTrue($t('(?<=x)\s(?<n>a)', "x\u{00a0}a"));   // outside the lookbehind, \s is still Unicode
+    }
+
     public function testNonJsBraceIsTextNotABound(): void
     {
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile('^' . $re . '$'), $v);
