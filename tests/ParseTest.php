@@ -121,6 +121,15 @@ final class ParseTest extends TestCase
         self::assertFalse($t('^a{2,3}$', 'aaaa'));
     }
 
+    public function testRegexBackreferenceScanIsLinearInDepthAndReferences(): void
+    {
+        foreach (['(a)?', '(a)'] as $group) {
+            $t = hrtime(true);
+            Regex::compile(str_repeat('(?:', 4000) . $group . str_repeat(')', 4000) . str_repeat('\\1', 4000));
+            self::assertLessThan(0.5, (hrtime(true) - $t) / 1e9, $group);
+        }
+    }
+
     public function testRegexPcreRejectsNeverMatchesAndNeverThrows(): void
     {
         $m = self::rulesSnapshot([['id' => 'bad', 'action' => 'block', 'conds' => [['f' => 'path', 'op' => 'matches', 'v' => '(?<=a']]]]);
