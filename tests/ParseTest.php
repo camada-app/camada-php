@@ -213,6 +213,9 @@ final class ParseTest extends TestCase
         self::assertNull(Regex::compile('^[\u0020-\u00FF]+$'));
         self::assertFalse($t('^[\u0020-\u00FF]+$', '日本'));
         self::assertNull(Regex::compile('[\u0080-\u00FF]'));
+        self::assertNull(Regex::compile('^[\x20-\xff]+$'));
+        self::assertFalse($t('^[\x20-\xff]+$', '日本'));
+        self::assertNull(Regex::compile('\xe9'));
         self::assertFalse($t('[\u0080-\u00FF]', '日'));
         self::assertTrue($t('^\u007a$', 'z'));
         self::assertTrue($t('^z$', 'z'));
@@ -230,7 +233,9 @@ final class ParseTest extends TestCase
             ['^\k$', 'k', true], ['(?<n>a)\k<n>', 'aa', true],
             ['^[\B]$', 'B', true], ['^[\p]$', 'p', true], ['^[\b]$', "\x08", true],
             ['^\d\w\s$', '1a ', true],
-            ['^\c1$', '\c1', true], ['^\c$', '\c', true],
+            ['^\c1$', '\c1', true], ['^\c$', '\c', true], ['^\x7f$', "\x7f", true],
+            ['^[\c1]$', "\x11", true], ['^[\c1]$', 'q', false], ['^[\c_]$', "\x1f", true], ['^[\c9]$', "\x19", true],
+            ['^[\c*]$', '\\', true], ['^[\c*]$', 'c', true], ['^[\c*]$', 'j', false], ['^[\c]$', '\\', true],
             ['^\v$', "\v", true], ['^\v$', "\n", false],
         ] as [$re, $v, $want]) {
             self::assertNotNull(Regex::compile($re), $re);
@@ -250,6 +255,8 @@ final class ParseTest extends TestCase
             ['^\S$', "\u{00a0}", false], ['^\S+$', 'ab', true], ['^\S+$', 'é', true], ['^\S+$', "a\u{00a0}", false],
             ['^[a\s]$', "\u{2028}", true], ['^[^a\s]$', "\u{00a0}", false], ['^[^a\s]$', 'b', true], ['^[^\S]$', "\u{00a0}", true],
             ['^[a-\sz]$', '-', true], ['^[a-\sz]$', 'm', false], ['^[a\s-z]$', 'm', false], ['^[\s^]$', '^', true], ['^[\s/]$', '/', true],
+            ['^[\s-\c1-x]$', '-', true], ['^[\s-\c1-x]$', 'b', false], ['^[\s-\c1-x]$', "\x11", true],
+            ['^[\s-\c-x]$', 'm', true], ['^[\s-\c-x]$', '\\', true], ['^[\s-\c-x]$', '-', true], ['^[\s-\c*-x]$', 'm', true],
             ['^[\s-\cA-z]$', 'b', false], ['^[\s-\101-z]$', 'b', false], ['^[\s-\cA-z]$', '-', true],
             ['^[\s-a-z]$', 'b', false], ['^[\s-a-z]$', '-', true], ['^[\s-a-z]$', 'z', true], ['^[\s-\x41-z]$', 'b', false],
             ['^[\s-\d-z]$', 'b', false], ['^[\s-ab-z]$', 'c', true], ['^[a-\s-z]$', 'b', false], ['^[ \s]$', "\u{2003}", true],
