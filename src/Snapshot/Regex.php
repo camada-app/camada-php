@@ -19,8 +19,8 @@ namespace Camada\Snapshot;
  * staying a literal dash, as does a `-` right after the atom that follows it; a literal `[` in a class is escaped (no
  * POSIX classes, as in JS). An atom never starts inside a whitespace or line-terminator char (a lookbehind refuses its
  * continuation bytes; dropped when a huge repeat overflows PCRE). Inside a lookbehind `\s`/`\S` stay PCRE's ASCII ones
- * (WS is 1-3 bytes and PCRE2 < 10.43 needs a fixed-length lookbehind). A pattern
- * PCRE still rejects never matches and never throws — and never surfaces a warning (fail open).
+ * (WS is 1-3 bytes and PCRE2 < 10.43 needs a fixed-length lookbehind). A pattern PCRE still rejects never matches and
+ * never throws — and never surfaces a warning (fail open).
  */
 final class Regex
 {
