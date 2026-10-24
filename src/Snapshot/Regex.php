@@ -21,12 +21,17 @@ namespace Camada\Snapshot;
  * POSIX classes, as in JS). An atom never starts inside a whitespace or line-terminator char (a lookbehind refuses its
  * continuation bytes; dropped when a huge repeat overflows PCRE). Inside a lookbehind `\s`/`\S` stay PCRE's ASCII ones
  * (WS is 1-3 bytes and PCRE2 < 10.43 needs a fixed-length lookbehind). A pattern PCRE still rejects never matches and
- * never throws — and never surfaces a warning (fail open).
+ * never throws — and never surfaces a warning (fail open). So does a backreference to a group that may not have
+ * captured on that pass (still open, under a min-0 quantifier or negative lookaround, or in an alternation branch): JS
+ * resets captures per iteration and reads it as empty, PCRE keeps the last capture and fails it (see scanGroups).
+ * JS matches a lookbehind right to left, so the same applies to a backreference inside a lookbehind or to a group
+ * inside one, and a `\k<name>` naming no group (a SyntaxError in JS) does too.
  */
 final class Regex
 {
     private const JS_ATOM = '/\G(?:\\\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|(?!c)[\s\S])|[\s\S])/';   // one class atom
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
+    private const JS_BRACE = '/\G\{([0-9]+)(?:(,)([0-9]*))?\}/';   // a JS {m}, {m,} or {m,n}
     private const MAX_REP = '65535';   // PCRE2's quantifier ceiling (JS has none)
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
@@ -39,7 +44,11 @@ final class Regex
     /** The delimited PCRE pattern, or null when this runtime rejects the spelling. `$flags` is 'i' for a path regex (§D3 "Path matching"). */
     public static function compile(string $js, string $flags = ''): ?string
     {
-        $p = '/' . self::translate($js) . '/D' . $flags;
+        [$named, $diverges] = self::scanGroups($js);
+        if ($diverges) {
+            return null;
+        }
+        $p = '/' . self::translate($js, $named) . '/D' . $flags;
         if (@preg_match($p, '') !== false) {
             return $p;
         }
@@ -71,14 +80,13 @@ final class Regex
         return strlen($a) <=> strlen($b) ?: strcmp($a, $b);
     }
 
-    private static function translate(string $pattern): string
+    private static function translate(string $pattern, bool $named): string
     {
         $out = '';
         $n = strlen($pattern);
         $inClass = false;
         [$start, $neg, $pulled, $pullEnd, $soloEnd] = [0, false, [], -1, -1];   // the open class: its `[` offset in $out, negation, \s/\S pulled out, where the last one ended, where the atom after its dash ended
         $groups = [];   // open groups, true for a lookbehind: `\s` there stays native (WS is 1-3 bytes; PCRE2 < 10.43 wants a fixed length)
-        $named = preg_match('/\(\?<(?![=!])/', $pattern) === 1;
         for ($i = 0; $i < $n;) {
             $ch = $pattern[$i];
             if ($ch === '\\' && $i + 1 < $n) {
@@ -163,7 +171,7 @@ final class Regex
                 $groups[] = preg_match('/\G\(\?<[=!]/', $pattern, $unused, 0, $i) === 1;
             } elseif ($ch === ')') {
                 array_pop($groups);
-            } elseif ($ch === '{' && preg_match('/\G\{([0-9]+)(?:(,)([0-9]*))?\}/', $pattern, $q, 0, $i) === 1) {
+            } elseif ($ch === '{' && preg_match(self::JS_BRACE, $pattern, $q, 0, $i) === 1) {
                 $i += strlen($q[0]);
                 [$lo, $comma, $hi] = [$q[1], $q[2] ?? '', $q[3] ?? ''];
                 if ($hi !== '' && self::cmp($lo, $hi) > 0) {
@@ -185,6 +193,85 @@ final class Regex
         return $out;
     }
 
+    /**
+     * @return array{bool, bool} [a real `(?<name>` group exists, a backreference may target a group that did not capture]: one
+     * escape- and class-aware walk (a class opens at an unescaped `[`, `[` is literal inside, the first unescaped `]` closes it).
+     * A backreference diverges when its group is still open at the reference, sits under a min-0 quantifier or a negative
+     * lookaround (itself or any ancestor), or lies in an alternation branch (an ancestor or the top level has a `|`).
+     */
+    private static function scanGroups(string $p): array
+    {
+        if (preg_match('/\\\\(?:[1-9]|k)/', $p) !== 1) {
+            return [false, false];
+        }
+        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int}> $frames  end is -1 while open */
+        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1]];
+        [$stack, $groups, $refs] = [[0], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset, frame]
+        [$n, $inClass] = [strlen($p), false];
+        for ($i = 0; $i < $n; $i++) {
+            $ch = $p[$i];
+            if ($ch === '\\') {
+                if (!$inClass && preg_match('/\G\\\\(?:k<([^<>]+)>|([1-9][0-9]*))/', $p, $m, 0, $i) === 1) {
+                    $refs[] = [$m[2] ?? $m[1], !isset($m[2]), $i, $stack[count($stack) - 1]];
+                }
+                $i++;
+            } elseif ($inClass) {
+                $inClass = $ch !== ']';
+            } elseif ($ch === '[') {
+                $inClass = true;
+            } elseif ($ch === '(') {
+                $q = ($p[$i + 1] ?? '') === '?';
+                $cap = !$q || (($p[$i + 2] ?? '') === '<' && !in_array($p[$i + 3] ?? '', ['=', '!'], true));
+                $frames[] = ['parent' => $stack[count($stack) - 1], 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1];
+                $stack[] = count($frames) - 1;
+                if ($cap) {
+                    $groups[] = [count($frames) - 1, $q ? (preg_match('/\G\(\?<([^<>]*)>/', $p, $m, 0, $i) === 1 ? $m[1] : '') : null];   // a JS name holds no `<` or `>`: the scan stops at the next one
+                }
+            } elseif ($ch === '|') {
+                $top = $stack[count($stack) - 1];
+                $frames[$top] = ['alt' => true] + $frames[$top];
+            } elseif ($ch === ')' && count($stack) > 1) {
+                $f = array_pop($stack);
+                $min0 = in_array($p[$i + 1] ?? '', ['?', '*'], true)
+                    || (preg_match(self::JS_BRACE, $p, $b, 0, $i + 1) === 1 && self::cmp($b[1], '0') === 0);
+                $frames[$f] = ['end' => $i, 'min0' => $min0] + $frames[$f];
+            }
+        }
+        $names = [];
+        foreach ($groups as $k => [, $name]) {
+            if ($name !== null) {
+                $names[$name] ??= $k;
+            }
+        }
+        $named = $names !== [];
+        foreach ($refs as [$ref, $isName, $at, $rf]) {
+            if ($isName && $named && !isset($names[$ref])) {
+                return [$named, true];   // JS: SyntaxError
+            }
+            $k = $isName ? ($named ? $names[$ref] ?? null : null) : (strlen($ref) < 8 && (int) $ref <= count($groups) ? (int) $ref - 1 : null);   // past the count it is an octal or identity escape
+            if ($k === null) {
+                continue;
+            }
+            $g = $groups[$k][0];
+            foreach ([$rf, $g] as $f) {   // JS reads a lookbehind right to left: "closed before the reference" flips
+                for (; $f >= 0; $f = $frames[$f]['parent']) {
+                    if ($frames[$f]['lb']) {
+                        return [$named, true];
+                    }
+                }
+            }
+            if ($frames[$g]['end'] < 0 || $frames[$g]['end'] > $at) {
+                return [$named, true];
+            }
+            for ($f = $g; $f >= 0; $f = $frames[$f]['parent']) {
+                if ($frames[$f]['min0'] || $frames[$f]['neg'] || ($f !== $g && $frames[$f]['alt'])) {
+                    return [$named, true];
+                }
+            }
+        }
+        return [$named, false];
+    }
+
     /** @param list<string> $pulled  Rebuild the class opened at $start as the union of its body and the \s/\S sets it held. */
     private static function union(string $out, int $start, bool $neg, array $pulled): string
     {
@@ -203,6 +290,6 @@ final class Regex
         if ($neg) {
             return $out . '(?:(?!' . implode('|', $alts) . ')' . self::IN_WS . '[\\s\\S])';
         }
-        return $out . (count($alts) > 1 ? '(?>' . implode('|', $alts) . ')' : $alts[0]);
+        return $out . (count($alts) > 1 ? '(?>' . implode('|', $alts) . ')' : implode('', $alts));
     }
 }
