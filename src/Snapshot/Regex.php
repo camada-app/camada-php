@@ -48,7 +48,7 @@ final class Regex
     private static ?int $budgetNs = null;   // left in the open walk; null when none is active
     private const JS_BRACE = '/\G\{([0-9]+)(?:(,)([0-9]*))?\}/';   // a JS {m}, {m,} or {m,n}
     private const JS_REF = '/\G\\\\(?:k<([^<>]+)>|([1-9][0-9]*))/';   // a backreference: \k<name> or \N
-    private const JS_MODIFIER = '/\G\(\?[A-Za-z^-]+[:)]/';   // an inline flag group: (?i:...), (?-s:...), (?i), (?^i:...)
+    private const JS_FLAG_GROUP = '/\G\(\?[A-Za-z^-]+[:)]/';   // an inline flag group: (?i:...), (?-s:...), (?i), (?^i:...)
     private const JS_GROUP = '/\G\(\?<([^<>]*)>/';   // a named group's opener: a JS name holds no `<` or `>`
     private const OTHER_ID_START = '\x{1885}\x{1886}\x{2118}\x{212E}\x{309B}\x{309C}';   // ID_Start beyond \p{L}\p{Nl} (PCRE2 < 10.40 has no \p{ID_Start})
     private const JS_NAME = '/^(?!.*\x{2E2F})[\p{L}\p{Nl}$_' . self::OTHER_ID_START . '][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}$\x{200C}\x{200D}' . self::OTHER_ID_START
@@ -227,7 +227,7 @@ final class Regex
                 $i = $j;
                 continue;
             } elseif ($ch === '(') {
-                if (preg_match(self::JS_MODIFIER, $pattern, $unused, 0, $i) === 1) {
+                if (preg_match(self::JS_FLAG_GROUP, $pattern, $unused, 0, $i) === 1) {
                     return null;   // fail open: JS rejects or V8 mis-evaluates inline flag groups
                 }
                 if ($names !== [] && ($pattern[$i + 1] ?? '') === '?' && preg_match(self::JS_GROUP, $pattern, $m, 0, $i) === 1 && isset($names[$m[1]])) {

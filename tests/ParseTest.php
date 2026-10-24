@@ -130,7 +130,7 @@ final class ParseTest extends TestCase
         }
     }
 
-    public function testRegexModifierGroupFailsOpen(): void
+    public function testRegexInlineFlagGroupFailsOpen(): void
     {
         foreach (['(?:(a{0,2}))((\\b\\3)*?)?(?i:\\1|[^a]*)+?', '(?i:googlebot|bingbot)', '(?-i:a)', '(?s:.)', '(?m:a$)', '(?i-m:a)', 'x(?i:a)', '(?i:(a))+x\\1', 'a(?i)b', '(?i)admin', '(?x:a b)', '(?^i:a)', '(?-i)a', '(?s)a.b', '(?R)', 'x(?im-s)y'] as $re) {
             self::assertNull(Regex::compile($re), $re);
