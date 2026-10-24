@@ -91,6 +91,11 @@ final class Regex
                     $i += 1 + strlen($m[0]);
                     continue;
                 }
+                if (preg_match('/\G[23][0-7]{2}/', $pattern, $m, 0, $i + 1) === 1) {
+                    $out .= sprintf('\\u%04X', octdec($m[0]));   // legacy octal \200-\377: JS reads U+0080-U+00FF, PCRE a byte; `\u` fails open
+                    $i += 4;
+                    continue;
+                }
                 $d = $pattern[$i + 2] ?? '';
                 if ($inClass && $c === 'c' && (ctype_digit($d) || $d === '_')) {
                     $out .= sprintf('\\x%02X', ord($d) & 0x1F);   // JS Annex B: `[\c1]` is the control char, PCRE reads 'q'
