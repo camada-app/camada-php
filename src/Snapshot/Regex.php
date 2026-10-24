@@ -36,6 +36,7 @@ final class Regex
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
     private const JS_BRACE = '/\G\{([0-9]+)(?:(,)([0-9]*))?\}/';   // a JS {m}, {m,} or {m,n}
     private const JS_REF = '/\G\\\\(?:k<([^<>]+)>|([1-9][0-9]*))/';   // a backreference: \k<name> or \N
+    private const JS_GROUP = '/\G\(\?<([^<>]*)>/';   // a named group's opener: a JS name holds no `<` or `>`
     private const MAX_REP = '65535';   // PCRE2's quantifier ceiling (JS has none)
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
@@ -48,11 +49,11 @@ final class Regex
     /** The delimited PCRE pattern, or null when this runtime rejects the spelling. `$flags` is 'i' for a path regex (§D3 "Path matching"). */
     public static function compile(string $js, string $flags = ''): ?string
     {
-        [$named, $diverges, $marks, $names] = self::scanGroups($js);
+        [$diverges, $marks, $names] = self::scanGroups($js);
         if ($diverges) {
             return null;
         }
-        $p = '/' . self::translate($js, $named, $marks, $names) . '/D' . $flags;
+        $p = '/' . self::translate($js, $marks, $names) . '/D' . $flags;
         if (@preg_match($p, '') !== false) {
             return $p;
         }
@@ -85,10 +86,10 @@ final class Regex
     }
 
     /**
-     * @param array<int, bool> $marks  reference offset => true for a conditional, false for `(?:)`
+     * @param array<int, array{int, bool}> $marks  reference offset => [its end, true for a conditional, false for `(?:)`]
      * @param array<string, string> $names  group name => ordinal ASCII name
      */
-    private static function translate(string $pattern, bool $named, array $marks, array $names): string
+    private static function translate(string $pattern, array $marks, array $names): string
     {
         $out = '';
         $n = strlen($pattern);
@@ -99,9 +100,17 @@ final class Regex
             $ch = $pattern[$i];
             if ($ch === '\\' && $i + 1 < $n) {
                 $c = $pattern[$i + 1];
-                if (!$inClass && (isset($marks[$i]) || ($c === 'k' && $named)) && preg_match(self::JS_REF, $pattern, $m, 0, $i) === 1) {
-                    $ref = isset($m[2]) ? '\\' . $m[2] : '\\k<' . $names[$m[1]] . '>';   // a numbered reference keeps its number
-                    $out .= !isset($marks[$i]) ? $ref : ($marks[$i] ? '(?(' . (isset($m[2]) ? $m[2] : '<' . $names[$m[1]] . '>') . ')' . $ref . ')' : '(?:)');
+                if (!$inClass && isset($marks[$i])) {   // a reference to a group that may be unset reads empty in JS
+                    [$end, $cond] = $marks[$i];
+                    $ref = substr($pattern, $i, $end - $i);
+                    $id = $c === 'k' ? '<' . $names[substr($ref, 3, -1)] . '>' : substr($ref, 1);
+                    $ref = $c === 'k' ? '\\k' . $id : $ref;
+                    $out .= $cond ? '(?(' . $id . ')' . $ref . ')' : '(?:)';
+                    $i = $end;
+                    continue;
+                }
+                if (!$inClass && $c === 'k' && $names !== [] && preg_match(self::JS_REF, $pattern, $m, 0, $i) === 1) {
+                    $out .= '\\k<' . $names[$m[1]] . '>';
                     $i += strlen($m[0]);
                     continue;
                 }
@@ -135,7 +144,7 @@ final class Regex
                     continue;
                 }
                 $kept = !ctype_alpha($c) || preg_match(self::JS_ESCAPE, $pattern, $unused, 0, $i + 1) === 1
-                    || ($c === 'B' && !$inClass) || ($c === 'k' && $named) || ($c === 'c' && ctype_alpha($d));
+                    || ($c === 'B' && !$inClass) || ($c === 'k' && $names !== []) || ($c === 'c' && ctype_alpha($d));
                 $out .= match (true) {
                     $c === 'v' => '\\x0B',   // PCRE `\v` is any vertical space, JS only VT
                     $kept => '\\' . $c,     // `\/` and `\\` stay what they are
@@ -182,7 +191,7 @@ final class Regex
                 $i = $j;
                 continue;
             } elseif ($ch === '(') {
-                if (preg_match('/\G\(\?<([^<>=!][^<>]*)>/', $pattern, $m, 0, $i) === 1 && isset($names[$m[1]])) {
+                if ($names !== [] && ($pattern[$i + 1] ?? '') === '?' && preg_match(self::JS_GROUP, $pattern, $m, 0, $i) === 1 && isset($names[$m[1]])) {
                     $out .= '(?<' . $names[$m[1]] . '>';
                     $groups[] = false;
                     $i += strlen($m[0]);
@@ -214,28 +223,28 @@ final class Regex
     }
 
     /**
-     * @return array{bool, bool, array<int, bool>, array<string, string>} [a real `(?<name>` group exists, the pattern must fail
-     * open, {reference offset => true for a conditional, false for `(?:)`}, {group name => ordinal ASCII name}]: one escape- and
-     * class-aware walk (a class opens at an unescaped `[`, `[` is literal inside, the first unescaped `]` closes it). JS reads a
-     * reference to an unset group as empty. One whose group is still open at the reference (forward or self) is always empty:
-     * false. One whose group sits under a min-0 quantifier or a negative lookaround (itself or any ancestor), or lies in an
+     * @return array{bool, array<int, array{int, bool}>, array<string, string>} [the pattern must fail open, {reference offset =>
+     * [its end, true for a conditional, false for `(?:)`]}, {group name => ordinal ASCII name}]: one escape- and class-aware walk
+     * (a class opens at an unescaped `[`, `[` is literal inside, the first unescaped `]` closes it). JS reads a
+     * reference to an unset group as empty. One whose group is still open at the reference (forward or self) is always empty: false. One whose group sits under a min-0 quantifier or a negative lookaround (itself or any ancestor), or lies in an
      * alternation branch (an ancestor or the top level has a `|`), may be unset: true, unless a strict ancestor of the group
-     * repeats (JS resets captures per iteration, PCRE keeps them): fail open. A name that is no JS identifier fails open.
+     * repeats (JS resets captures per iteration, PCRE keeps them): fail open. A name that is no JS identifier fails open. Frames are
+     * created in `(` order, so one forward pass gives each its inherited flags and every reference is classified in O(1).
      */
     private static function scanGroups(string $p): array
     {
         if (preg_match('/\\\\(?:[1-9]|k)|\(\?<[^=!]/', $p) !== 1) {
-            return [false, false, [], []];
+            return [false, [], []];
         }
         /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int, rep: bool}> $frames  end is -1 while open */
         $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1, 'rep' => false]];
-        [$stack, $groups, $refs, $marks] = [[0], [], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset, frame]
+        [$stack, $groups, $refs, $marks] = [[0], [], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset, end, frame]
         [$n, $inClass] = [strlen($p), false];
         for ($i = 0; $i < $n; $i++) {
             $ch = $p[$i];
             if ($ch === '\\') {
-                if (!$inClass && preg_match('/\G\\\\(?:k<([^<>]+)>|([1-9][0-9]*))/', $p, $m, 0, $i) === 1) {
-                    $refs[] = [$m[2] ?? $m[1], !isset($m[2]), $i, $stack[count($stack) - 1]];
+                if (!$inClass && preg_match(self::JS_REF, $p, $m, 0, $i) === 1) {
+                    $refs[] = [$m[2] ?? $m[1], !isset($m[2]), $i, strlen($m[0]) + $i, $stack[count($stack) - 1]];
                 }
                 $i++;
             } elseif ($inClass) {
@@ -248,7 +257,7 @@ final class Regex
                 $frames[] = ['parent' => $stack[count($stack) - 1], 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1, 'rep' => false];
                 $stack[] = count($frames) - 1;
                 if ($cap) {
-                    $groups[] = [count($frames) - 1, $q ? (preg_match('/\G\(\?<([^<>]*)>/', $p, $m, 0, $i) === 1 ? $m[1] : '') : null];   // a JS name holds no `<` or `>`: the scan stops at the next one
+                    $groups[] = [count($frames) - 1, $q ? (preg_match(self::JS_GROUP, $p, $m, 0, $i) === 1 ? $m[1] : '') : null];
                 }
             } elseif ($ch === '|') {
                 $top = $stack[count($stack) - 1];
@@ -268,47 +277,42 @@ final class Regex
                 $names[$name] ??= $k;
             }
         }
-        $named = $names !== [];
         $ord = [];
         foreach (array_keys($names) as $name) {
             if (preg_match('/^[\p{L}\p{Nl}$_][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}$\x{200C}\x{200D}]*$/u', (string) $name) !== 1) {
-                return [$named, true, [], []];   // not a JS identifier (a SyntaxError), or invalid UTF-8
+                return [true, [], []];   // not a JS identifier (a SyntaxError), or invalid UTF-8
             }
             $ord[$name] = 'n' . (count($ord) + 1);   // every name is mapped: none collides with another, PCRE's 32-char limit never binds
         }
-        foreach ($refs as [$ref, $isName, $at, $rf]) {
-            if ($isName && $named && !isset($names[$ref])) {
-                return [$named, true, [], []];   // JS: SyntaxError
+        $inLb = $unset = $repAbove = [false];   // per frame: a lookbehind at or above, may be unset, a strict ancestor repeats
+        foreach (array_slice($frames, 1) as $fr) {
+            $par = $frames[$fr['parent']];
+            $inLb[] = $fr['lb'] || $inLb[$fr['parent']];
+            $unset[] = $fr['min0'] || $fr['neg'] || $par['alt'] || $unset[$fr['parent']];
+            $repAbove[] = $par['rep'] || $repAbove[$fr['parent']];
+        }
+        foreach ($refs as [$ref, $isName, $at, $end, $rf]) {
+            if ($isName && $names !== [] && !isset($names[$ref])) {
+                return [true, [], []];   // JS: SyntaxError
             }
-            $k = $isName ? ($named ? $names[$ref] ?? null : null) : (strlen($ref) < 8 && (int) $ref <= count($groups) ? (int) $ref - 1 : null);   // past the count it is an octal or identity escape
+            $k = $isName ? $names[$ref] ?? null : (strlen($ref) < 8 && (int) $ref <= count($groups) ? (int) $ref - 1 : null);   // past the count it is an octal or identity escape
             if ($k === null) {
                 continue;
             }
             $g = $groups[$k][0];
-            foreach ([$rf, $g] as $f) {   // JS reads a lookbehind right to left: "closed before the reference" flips
-                for (; $f >= 0; $f = $frames[$f]['parent']) {
-                    if ($frames[$f]['lb']) {
-                        return [$named, true, [], []];
-                    }
-                }
+            if ($inLb[$rf] || $inLb[$g]) {   // JS reads a lookbehind right to left: "closed before the reference" flips
+                return [true, [], []];
             }
             if ($frames[$g]['end'] < 0 || $frames[$g]['end'] > $at) {
-                $marks[$at] = false;
-                continue;
-            }
-            for ($f = $g; $f >= 0; $f = $frames[$f]['parent']) {
-                if ($frames[$f]['min0'] || $frames[$f]['neg'] || ($f !== $g && $frames[$f]['alt'])) {
-                    $marks[$at] = true;
-                    break;
+                $marks[$at] = [$end, false];
+            } elseif ($unset[$g]) {
+                if ($repAbove[$g]) {
+                    return [true, [], []];
                 }
-            }
-            for ($f = isset($marks[$at]) ? $frames[$g]['parent'] : -1; $f >= 0; $f = $frames[$f]['parent']) {   // a repeating strict ancestor
-                if ($frames[$f]['rep']) {
-                    return [$named, true, [], []];
-                }
+                $marks[$at] = [$end, true];
             }
         }
-        return [$named, false, $marks, $ord];
+        return [false, $marks, $ord];
     }
 
     /** @param list<string> $pulled  Rebuild the class opened at $start as the union of its body and the \s/\S sets it held. */
