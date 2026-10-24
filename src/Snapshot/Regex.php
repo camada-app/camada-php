@@ -31,9 +31,10 @@ namespace Camada\Snapshot;
  * PCRE without `u` neither those nor one past 32 chars.
  * JS matches a lookbehind right to left, so the same applies to a backreference inside a lookbehind or to a group
  * inside one, and a `\k<name>` naming no group (a SyntaxError in JS) does too.
- * Byte mode counts bytes: a non-ASCII char is 2-4 bytes here and one UTF-16 unit in JS, so `.`, `[^a]`, `.{n}` and a
- * backreference to a captured `.` can disagree on one, and under `i` only ASCII folds (`é` does not match `É`); literal
- * non-ASCII text, `.*` and ASCII classes agree (an accepted gap, camada-all-mx0s).
+ * Byte mode counts bytes: a non-ASCII char is 2-4 bytes here and one or two UTF-16 units in JS (two for an emoji), so
+ * a pattern that counts characters around one (`.`, `[^a]`, `.{n}`, a backreference to a captured `.`) or puts one in
+ * a class or before a quantifier (`é?`, `é+`, `[é]`) can disagree, and under `i` only ASCII folds (`é` does not match
+ * `É`); `.*` and a bare non-ASCII literal agree (an accepted gap, camada-all-mx0s).
  */
 final class Regex
 {
@@ -43,8 +44,8 @@ final class Regex
     private const JS_REF = '/\G\\\\(?:k<([^<>]+)>|([1-9][0-9]*))/';   // a backreference: \k<name> or \N
     private const JS_GROUP = '/\G\(\?<([^<>]*)>/';   // a named group's opener: a JS name holds no `<` or `>`
     private const OTHER_ID_START = '\x{1885}\x{1886}\x{2118}\x{212E}\x{309B}\x{309C}';   // ID_Start beyond \p{L}\p{Nl} (PCRE2 < 10.40 has no \p{ID_Start})
-    private const JS_NAME = '/^[\p{L}\p{Nl}$_' . self::OTHER_ID_START . '][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}$\x{200C}\x{200D}' . self::OTHER_ID_START
-        . '\x{00B7}\x{0387}\x{1369}-\x{1371}\x{19DA}\x{30FB}\x{FF65}]*$/u';   // a JS group name: ID_Start then ID_Continue, plus $ _ ZWNJ ZWJ
+    private const JS_NAME = '/^(?!.*\x{2E2F})[\p{L}\p{Nl}$_' . self::OTHER_ID_START . '][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}$\x{200C}\x{200D}' . self::OTHER_ID_START
+        . '\x{00B7}\x{0387}\x{1369}-\x{1371}\x{19DA}\x{30FB}\x{FF65}]*\z/u';   // a JS group name: ID_Start then ID_Continue, plus $ _ ZWNJ ZWJ; U+2E2F is \p{Lm} but not an ID char
     private const MAX_REP = '65535';   // PCRE2's quantifier ceiling (JS has none)
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
