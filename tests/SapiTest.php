@@ -326,20 +326,20 @@ final class SapiTest extends TestCase
     public function testADueSpoolShipsInThePostResponsePhase(): void
     {
         $app = $this->boot();
-        $app->request('GET', '/');
-        $this->spool(1);
+        // Age the clock before the only request: an earlier request's own post-response ship check runs
+        // after its event lands, so aging the clock once an event is spooled raced it under load.
         $cache = new Cache($this->dir);
         $cache->writeJson('flush.json', ['last_flush' => microtime(true) - 20, 'dropped' => 0]);   // the 15 s clock has run out
         $app->request('GET', '/status');
-        $deadline = microtime(true) + 5;
+        $deadline = microtime(true) + 15;
         while (!file_exists($this->dir . '/sink.ndjson') && microtime(true) < $deadline) {
             usleep(20_000);
         }
         $batches = array_map(static fn (string $l): mixed => json_decode($l, true), file($this->dir . '/sink.ndjson', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: []);
         self::assertCount(1, $batches);
         self::assertIsArray($batches[0]);
-        self::assertCount(2, $batches[0]);
-        self::assertSame([200, 201], array_column($batches[0], 'st'));
+        self::assertCount(1, $batches[0]);
+        self::assertSame([201], array_column($batches[0], 'st'));
         self::assertFileDoesNotExist($this->dir . '/events.ndjson');
         self::assertSame([], glob($this->dir . '/events.*.sending') ?: []);
     }
