@@ -360,7 +360,7 @@ final class Regex
                 $min0 = self::min0At($p, $i + 1);
                 $rep = in_array($p[$i + 1] ?? '', ['+', '*'], true)
                     || ($isB && (($b[2] ?? '') !== '' && ($b[3] ?? '') === '' || self::cmp(($b[3] ?? '') === '' ? $b[1] : $b[3], '1') > 0));   // {n,} {n} n>1 {n,m} m>1
-                $opt = $rep && !($isB && (($b[2] ?? '') === '' || (($b[3] ?? '') !== '' && self::cmp($b[3], $b[1]) === 0)));   // not `{n}` / `{n,n}`: iterations past the minimum
+                $opt = $rep && (!$isB || (($b[2] ?? '') !== '' && (($b[3] ?? '') === '' || self::cmp($b[3], $b[1]) !== 0)));   // not `{n}` / `{n,n}`: iterations past the minimum
                 $fr = $frames[$f];
                 $nullable = $fr['nullable'] || !$fr['solid'] || $fr['neg'] || $fr['lb'] || $fr['la'];
                 $holds = $fr['holds'] || (($min0 || $rep) && $nullable);   // it or a frame inside it: an optional nullable repeat
