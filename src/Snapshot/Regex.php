@@ -24,13 +24,15 @@ namespace Camada\Snapshot;
  * never throws — and never surfaces a warning (fail open). So does a backreference to a group that may not have
  * captured on that pass (still open, under a min-0 quantifier or negative lookaround, or in an alternation branch): JS
  * resets captures per iteration and reads it as empty, PCRE keeps the last capture and fails it (see scanGroups).
+ * JS matches a lookbehind right to left, so the same applies to a backreference inside a lookbehind or to a group
+ * inside one, and a `\k<name>` naming no group (a SyntaxError in JS) does too.
  */
 final class Regex
 {
     private const JS_ATOM = '/\G(?:\\\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|(?!c)[\s\S])|[\s\S])/';   // one class atom
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
     private const JS_BRACE = '/\G\{([0-9]+)(?:(,)([0-9]*))?\}/';   // a JS {m}, {m,} or {m,n}
-    private const MAX_REP ='65535';   // PCRE2's quantifier ceiling (JS has none)
+    private const MAX_REP = '65535';   // PCRE2's quantifier ceiling (JS has none)
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
     private const LS = '\xE2\x80[\xA8\xA9]';
@@ -202,15 +204,15 @@ final class Regex
         if (preg_match('/\\\\(?:[1-9]|k)/', $p) !== 1) {
             return [false, false];
         }
-        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, end: int}> $frames  end is -1 while open */
-        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'end' => -1]];
-        [$stack, $groups, $refs] = [[0], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset]
+        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int}> $frames  end is -1 while open */
+        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1]];
+        [$stack, $groups, $refs] = [[0], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset, frame]
         [$n, $inClass] = [strlen($p), false];
         for ($i = 0; $i < $n; $i++) {
             $ch = $p[$i];
             if ($ch === '\\') {
-                if (!$inClass && preg_match('/\G\\\\(?:k<([^>]+)>|([1-9][0-9]*))/', $p, $m, 0, $i) === 1) {
-                    $refs[] = [$m[2] ?? $m[1], !isset($m[2]), $i];
+                if (!$inClass && preg_match('/\G\\\\(?:k<([^<>]+)>|([1-9][0-9]*))/', $p, $m, 0, $i) === 1) {
+                    $refs[] = [$m[2] ?? $m[1], !isset($m[2]), $i, $stack[count($stack) - 1]];
                 }
                 $i++;
             } elseif ($inClass) {
@@ -220,11 +222,10 @@ final class Regex
             } elseif ($ch === '(') {
                 $q = ($p[$i + 1] ?? '') === '?';
                 $cap = !$q || (($p[$i + 2] ?? '') === '<' && !in_array($p[$i + 3] ?? '', ['=', '!'], true));
-                $frames[] = ['parent' => $stack[count($stack) - 1], 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'end' => -1];
+                $frames[] = ['parent' => $stack[count($stack) - 1], 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1];
                 $stack[] = count($frames) - 1;
                 if ($cap) {
-                    $close = strpos($p, '>', $i + 1);
-                    $groups[] = [count($frames) - 1, $q ? substr($p, $i + 3, ($close === false ? $n : $close) - $i - 3) : null];
+                    $groups[] = [count($frames) - 1, $q ? (preg_match('/\G\(\?<([^<>]*)>/', $p, $m, 0, $i) === 1 ? $m[1] : '') : null];   // a JS name holds no `<` or `>`: the scan stops at the next one
                 }
             } elseif ($ch === '|') {
                 $top = $stack[count($stack) - 1];
@@ -243,12 +244,22 @@ final class Regex
             }
         }
         $named = $names !== [];
-        foreach ($refs as [$ref, $isName, $at]) {
+        foreach ($refs as [$ref, $isName, $at, $rf]) {
+            if ($isName && $named && !isset($names[$ref])) {
+                return [$named, true];   // JS: SyntaxError
+            }
             $k = $isName ? ($named ? $names[$ref] ?? null : null) : (strlen($ref) < 8 && (int) $ref <= count($groups) ? (int) $ref - 1 : null);   // past the count it is an octal or identity escape
             if ($k === null) {
                 continue;
             }
             $g = $groups[$k][0];
+            foreach ([$rf, $g] as $f) {   // JS reads a lookbehind right to left: "closed before the reference" flips
+                for (; $f >= 0; $f = $frames[$f]['parent']) {
+                    if ($frames[$f]['lb']) {
+                        return [$named, true];
+                    }
+                }
+            }
             if ($frames[$g]['end'] < 0 || $frames[$g]['end'] > $at) {
                 return [$named, true];
             }
