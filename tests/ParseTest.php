@@ -282,6 +282,16 @@ final class ParseTest extends TestCase
         self::assertSame(PREG_NO_ERROR, preg_last_error());
     }
 
+    public function testHugeRepeatsFallBackToByteAtomsInsteadOfFailingOpen(): void
+    {
+        foreach (['.{700}', '\S{370}', '[^\s]{450}', '^.{1,255}$'] as $js) {
+            self::assertNotNull(Regex::compile($js), $js);
+        }
+        self::assertTrue(Regex::test(Regex::compile('.{256,}'), str_repeat('a', 300)));
+        self::assertTrue(Regex::test(Regex::compile('^[^\s]{3,200}$'), 'abc'));
+        self::assertFalse(Regex::test(Regex::compile('\S'), "\u{a0}"));   // a normal pattern keeps the guard
+    }
+
     public function testDotAndNonSpaceSurviveLongInputs(): void
     {
         self::assertTrue(Regex::test(Regex::compile('^/admin/.*'), '/admin/' . str_repeat('a', 8200)));

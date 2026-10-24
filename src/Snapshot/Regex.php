@@ -16,7 +16,7 @@ namespace Camada\Snapshot;
  * `[`/`[^` closes the class, a stray `]` is text); `\s`/`\S` are JS's Unicode whitespace (WS/NWS), and inside a class
  * they become a union with the rest of it (atomic, WS first, so a char matches one way only: no ReDoS), a `-` beside one
  * staying a literal dash, as does a `-` right after the atom that follows it. An atom never starts inside a whitespace or
- * line-terminator char (a lookbehind refuses its continuation bytes). Inside a lookbehind `\s`/`\S` stay PCRE's
+ * line-terminator char (a lookbehind refuses its continuation bytes; dropped when a huge repeat overflows PCRE). Inside a lookbehind `\s`/`\S` stay PCRE's
  * ASCII ones (WS is 1-3 bytes and PCRE2 < 10.43 needs a fixed-length lookbehind). A pattern
  * PCRE still rejects never matches and never throws — and never surfaces a warning (fail open).
  */
@@ -36,6 +36,10 @@ final class Regex
     public static function compile(string $js, string $flags = ''): ?string
     {
         $p = '/' . self::translate($js) . '/D' . $flags;
+        if (@preg_match($p, '') !== false) {
+            return $p;
+        }
+        $p = str_replace([self::IN_WS, self::IN_LS], '', $p);   // the guards triple each atom's size: a huge repeat keeps byte atoms rather than fail open
         return @preg_match($p, '') === false ? null : $p;
     }
 
