@@ -282,14 +282,16 @@ final class Regex
      * an atom that must consume input (`solid`: a literal, `.`, a class or a letter escape not followed by a min-0 quantifier,
      * or a non-nullable group) and whether the body can match empty (`nullable`: a branch without one, or a lookaround). Anything
      * unsure counts as nullable, which only fails open; a reference inside the repeating frame reads its own iteration's capture and stays.
+     * A plain reference to a group under a positive lookahead that holds an optional-iteration frame with a nullable body also fails
+     * open: JS rejects that empty iteration, so the lookahead's first success, and the capture it keeps, differs from PCRE's.
      */
     private static function scanGroups(string $p): array
     {
         if (preg_match('/\\\\(?:[1-9]|k)|\(\?<[^=!]/', $p) !== 1) {
             return [false, [], []];
         }
-        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int, rep: bool, la: bool, solid: bool, nullable: bool}> $frames  end is -1 while open */
-        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1, 'rep' => false, 'la' => false, 'solid' => false, 'nullable' => false]];
+        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int, rep: bool, la: bool, solid: bool, nullable: bool, holds: bool}> $frames  end is -1 while open */
+        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1, 'rep' => false, 'la' => false, 'solid' => false, 'nullable' => false, 'holds' => false]];
         [$stack, $groups, $refs, $marks] = [[0], [], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset, end, frame]
         [$n, $inClass, $quiet] = [strlen($p), false, 0];   // bytes before $quiet (a group header, a `\k<name>`) are no atoms
         for ($i = 0; $i < $n;) {
@@ -332,7 +334,7 @@ final class Regex
                 $q = ($p[$i + 1] ?? '') === '?';
                 $cap = !$q || (($p[$i + 2] ?? '') === '<' && !in_array($p[$i + 3] ?? '', ['=', '!'], true));
                 $gm = $q && $cap && preg_match(self::JS_GROUP, $p, $m, 0, $i) === 1 ? $m : null;
-                $frames[] = ['parent' => $top, 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1, 'rep' => false, 'la' => preg_match('/\G\?=/', $p, $unused, 0, $i + 1) === 1, 'solid' => false, 'nullable' => false];
+                $frames[] = ['parent' => $top, 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'lb' => preg_match('/\G\?<[=!]/', $p, $unused, 0, $i + 1) === 1, 'end' => -1, 'rep' => false, 'la' => preg_match('/\G\?=/', $p, $unused, 0, $i + 1) === 1, 'solid' => false, 'nullable' => false, 'holds' => false];
                 $stack[] = count($frames) - 1;
                 if ($gm !== null) {
                     $quiet = $i + strlen($gm[0]);
@@ -360,7 +362,9 @@ final class Regex
                     || ($isB && (($b[2] ?? '') !== '' && ($b[3] ?? '') === '' || self::cmp(($b[3] ?? '') === '' ? $b[1] : $b[3], '1') > 0));   // {n,} {n} n>1 {n,m} m>1
                 $fr = $frames[$f];
                 $nullable = $fr['nullable'] || !$fr['solid'] || $fr['neg'] || $fr['lb'] || $fr['la'];
-                $frames[$f] = ['end' => $i, 'min0' => $min0, 'rep' => $rep, 'nullable' => $nullable] + $fr;
+                $holds = $fr['holds'] || (($min0 || $rep) && $nullable);   // it or a frame inside it: an optional nullable repeat
+                $frames[$f] = ['end' => $i, 'min0' => $min0, 'rep' => $rep, 'nullable' => $nullable, 'holds' => $holds] + $fr;
+                $frames[$fr['parent']]['holds'] = $frames[$fr['parent']]['holds'] || $holds;
                 if (!$nullable && !$min0) {
                     $frames[$fr['parent']]['solid'] = true;
                 }
@@ -391,8 +395,10 @@ final class Regex
         }
         $inLb = $unset = $repAbove = $inLa = [false];   // per frame: a lookbehind at or above, may be unset, a strict ancestor repeats, a positive lookahead at or above
         $rn = [-1];   // per frame: end of the innermost frame at or above it that repeats and can match empty, -1 if none
+        $laDiv = [false];   // per frame: a positive lookahead at or above holds an optional nullable repeat
         foreach (array_slice($frames, 1) as $fr) {
             $par = $frames[$fr['parent']];
+            $laDiv[] = ($fr['la'] && $fr['holds']) || $laDiv[$fr['parent']];
             $inLb[] = $fr['lb'] || $inLb[$fr['parent']];
             $unset[] = $fr['min0'] || $fr['neg'] || $par['alt'] || $unset[$fr['parent']];
             $repAbove[] = $par['rep'] || $repAbove[$fr['parent']];
@@ -413,7 +419,7 @@ final class Regex
             }
             if ($frames[$g]['end'] < 0 || $frames[$g]['end'] > $at) {
                 $marks[$at] = [$end, false];
-            } elseif ($rn[$g] >= 0 && $rn[$g] < $at) {   // JS keeps the capture of an earlier iteration past an empty one, PCRE overwrites it
+            } elseif (($rn[$g] >= 0 && $rn[$g] < $at) || $laDiv[$g]) {   // JS keeps the capture of an earlier iteration past an empty one, PCRE overwrites it
                 return [true, [], []];
             } elseif ($unset[$g]) {
                 if ($repAbove[$g] || $frames[$g]['rep'] || $inLa[$g]) {   // JS drops an empty iteration, captures included; PCRE keeps it
