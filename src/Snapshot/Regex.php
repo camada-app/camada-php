@@ -29,7 +29,8 @@ final class Regex
 {
     private const JS_ATOM = '/\G(?:\\\\(?:c[A-Za-z0-9_]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[0-3][0-7]{0,2}|[4-7][0-7]?|(?!c)[\s\S])|[\s\S])/';   // one class atom
     private const JS_ESCAPE = '/\G(?:[bdDfnrsStvwW]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4})/';   // the letter escapes JS reads without `u`
-    private const MAX_REP = '65535';   // PCRE2's quantifier ceiling (JS has none)
+    private const JS_BRACE = '/\G\{([0-9]+)(?:(,)([0-9]*))?\}/';   // a JS {m}, {m,} or {m,n}
+    private const MAX_REP ='65535';   // PCRE2's quantifier ceiling (JS has none)
     /** JS \s as UTF-8 bytes (PCRE's without `u` is ASCII); NWS is one byte that starts none of them. */
     private const WS = '(?:[\t-\r ]|\xC2\xA0|\xE1\x9A\x80|\xE2\x80[\x80-\x8A\xA8\xA9\xAF]|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)';
     private const LS = '\xE2\x80[\xA8\xA9]';
@@ -41,10 +42,11 @@ final class Regex
     /** The delimited PCRE pattern, or null when this runtime rejects the spelling. `$flags` is 'i' for a path regex (§D3 "Path matching"). */
     public static function compile(string $js, string $flags = ''): ?string
     {
-        if (self::scanGroups($js)[1]) {
+        [$named, $diverges] = self::scanGroups($js);
+        if ($diverges) {
             return null;
         }
-        $p = '/' . self::translate($js) . '/D' . $flags;
+        $p = '/' . self::translate($js, $named) . '/D' . $flags;
         if (@preg_match($p, '') !== false) {
             return $p;
         }
@@ -76,14 +78,13 @@ final class Regex
         return strlen($a) <=> strlen($b) ?: strcmp($a, $b);
     }
 
-    private static function translate(string $pattern): string
+    private static function translate(string $pattern, bool $named): string
     {
         $out = '';
         $n = strlen($pattern);
         $inClass = false;
         [$start, $neg, $pulled, $pullEnd, $soloEnd] = [0, false, [], -1, -1];   // the open class: its `[` offset in $out, negation, \s/\S pulled out, where the last one ended, where the atom after its dash ended
         $groups = [];   // open groups, true for a lookbehind: `\s` there stays native (WS is 1-3 bytes; PCRE2 < 10.43 wants a fixed length)
-        $named = self::scanGroups($pattern)[0];
         for ($i = 0; $i < $n;) {
             $ch = $pattern[$i];
             if ($ch === '\\' && $i + 1 < $n) {
@@ -168,7 +169,7 @@ final class Regex
                 $groups[] = preg_match('/\G\(\?<[=!]/', $pattern, $unused, 0, $i) === 1;
             } elseif ($ch === ')') {
                 array_pop($groups);
-            } elseif ($ch === '{' && preg_match('/\G\{([0-9]+)(?:(,)([0-9]*))?\}/', $pattern, $q, 0, $i) === 1) {
+            } elseif ($ch === '{' && preg_match(self::JS_BRACE, $pattern, $q, 0, $i) === 1) {
                 $i += strlen($q[0]);
                 [$lo, $comma, $hi] = [$q[1], $q[2] ?? '', $q[3] ?? ''];
                 if ($hi !== '' && self::cmp($lo, $hi) > 0) {
@@ -198,60 +199,61 @@ final class Regex
      */
     private static function scanGroups(string $p): array
     {
-        [$parent, $alt, $min0, $neg, $end] = [[-1], [false], [false], [false], [-1]];   // per frame; end -1 while open
+        if (preg_match('/\\\\(?:[1-9]|k)/', $p) !== 1) {
+            return [false, false];
+        }
+        /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, end: int}> $frames  end is -1 while open */
+        $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'end' => -1]];
         [$stack, $groups, $refs] = [[0], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset]
-        [$i, $n, $inClass, $named] = [0, strlen($p), false, false];
-        while ($i < $n) {
+        [$n, $inClass] = [strlen($p), false];
+        for ($i = 0; $i < $n; $i++) {
             $ch = $p[$i];
             if ($ch === '\\') {
-                $at = $i;
-                $i += 2;
-                if (!$inClass && preg_match(($p[$at + 1] ?? '') === 'k' ? '/\G\\\\k<([^>]+)>/' : '/\G\\\\([1-9][0-9]*)/', $p, $m, 0, $at) === 1) {
-                    $refs[] = [$m[1], ($p[$at + 1] ?? '') === 'k', $at];
+                if (!$inClass && preg_match('/\G\\\\(?:k<([^>]+)>|([1-9][0-9]*))/', $p, $m, 0, $i) === 1) {
+                    $refs[] = [$m[2] ?? $m[1], !isset($m[2]), $i];
                 }
-                continue;
-            }
-            $i++;
-            if ($inClass) {
+                $i++;
+            } elseif ($inClass) {
                 $inClass = $ch !== ']';
             } elseif ($ch === '[') {
                 $inClass = true;
             } elseif ($ch === '(') {
-                $q = ($p[$i] ?? '') === '?';
-                $cap = !$q || (($p[$i + 1] ?? '') === '<' && !in_array($p[$i + 2] ?? '', ['=', '!'], true));
-                $named = $named || ($q && $cap);
-                $parent[] = $stack[count($stack) - 1];
-                [$alt[], $min0[], $end[]] = [false, false, -1];
-                $neg[] = preg_match('/\G\?<?!/', $p, $u, 0, $i) === 1;
-                $stack[] = count($parent) - 1;
+                $q = ($p[$i + 1] ?? '') === '?';
+                $cap = !$q || (($p[$i + 2] ?? '') === '<' && !in_array($p[$i + 3] ?? '', ['=', '!'], true));
+                $frames[] = ['parent' => $stack[count($stack) - 1], 'alt' => false, 'min0' => false, 'neg' => preg_match('/\G\?<?!/', $p, $unused, 0, $i + 1) === 1, 'end' => -1];
+                $stack[] = count($frames) - 1;
                 if ($cap) {
-                    $close = strpos($p, '>', $i);
-                    $groups[] = [count($parent) - 1, $q ? substr($p, $i + 2, ($close === false ? $n : $close) - $i - 2) : null];
+                    $close = strpos($p, '>', $i + 1);
+                    $groups[] = [count($frames) - 1, $q ? substr($p, $i + 3, ($close === false ? $n : $close) - $i - 3) : null];
                 }
             } elseif ($ch === '|') {
-                $alt[$stack[count($stack) - 1]] = true;
+                $top = $stack[count($stack) - 1];
+                $frames[$top] = ['alt' => true] + $frames[$top];
             } elseif ($ch === ')' && count($stack) > 1) {
                 $f = array_pop($stack);
-                $end[$f] = $i - 1;
-                $min0[$f] = in_array($p[$i] ?? '', ['?', '*'], true)
-                    || (preg_match('/\G\{([0-9]+)(?:,[0-9]*)?\}/', $p, $b, 0, $i) === 1 && trim($b[1], '0') === '');
+                $min0 = in_array($p[$i + 1] ?? '', ['?', '*'], true)
+                    || (preg_match(self::JS_BRACE, $p, $b, 0, $i + 1) === 1 && self::cmp($b[1], '0') === 0);
+                $frames[$f] = ['end' => $i, 'min0' => $min0] + $frames[$f];
             }
         }
         $names = [];
         foreach ($groups as $k => [, $name]) {
-            $names += $name === null ? [] : [$name => $k];
+            if ($name !== null) {
+                $names[$name] ??= $k;
+            }
         }
+        $named = $names !== [];
         foreach ($refs as [$ref, $isName, $at]) {
             $k = $isName ? ($named ? $names[$ref] ?? null : null) : (strlen($ref) < 8 && (int) $ref <= count($groups) ? (int) $ref - 1 : null);   // past the count it is an octal or identity escape
             if ($k === null) {
                 continue;
             }
             $g = $groups[$k][0];
-            if ($end[$g] < 0 || $end[$g] > $at) {
+            if ($frames[$g]['end'] < 0 || $frames[$g]['end'] > $at) {
                 return [$named, true];
             }
-            for ($f = $g; $f >= 0; $f = $parent[$f]) {
-                if ($min0[$f] || $neg[$f] || ($f !== $g && $alt[$f])) {
+            for ($f = $g; $f >= 0; $f = $frames[$f]['parent']) {
+                if ($frames[$f]['min0'] || $frames[$f]['neg'] || ($f !== $g && $frames[$f]['alt'])) {
                     return [$named, true];
                 }
             }
