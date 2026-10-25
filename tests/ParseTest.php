@@ -450,6 +450,31 @@ final class ParseTest extends TestCase
         }
     }
 
+    public function testClassOpeningPosixCharIsLiteralAsJsReadsIt(): void
+    {
+        foreach (['x[:alpha:]y', 'x[::]y', 'x[.a.]y', 'x[=a=]y', 'x[.a\.]y', 'x[.,;.]y'] as $re) {
+            self::assertNotNull(Regex::compile($re), $re);   // PCRE refuses these unescaped (POSIX class syntax)
+        }
+        foreach ([   // expected values from node
+            ['x[:alpha:]y', 'xly', true], ['x[:alpha:]y', 'x:y', true], ['x[:alpha:]y', 'xby', false],
+            ['x[::]y', 'x:y', true], ['x[::]y', 'xay', false],
+            ['x[.a.]y', 'x.y', true], ['x[.a.]y', 'xby', false],
+            ['x[=a=]y', 'x=y', true], ['x[=a=]y', 'xay', true],
+            ['x[.a\.]y', 'x.y', true],
+            ['x[.,;.]y', 'x;y', true], ['x[.,;.]y', 'xay', false],
+            ['x[^:a:]y', 'x:y', false], ['x[^:a:]y', 'xby', true],
+            ['x[:-a]y', 'x=y', true], ['x[:-a]y', 'xby', false],
+            ['x[:-\s]y', 'x-y', true], ['x[:-\s]y', 'x y', true], ['x[:-\s]y', 'xay', false],
+            ['x[:\s:]y', 'x y', true], ['x[:\s:]y', 'x:y', true], ['x[:\s:]y', 'xay', false],
+            ['x[^:\s:]y', 'xay', true], ['x[^:\s:]y', 'x:y', false], ['x[^:\s:]y', 'x y', false],
+            ['x[[:alpha:][:digit:]]y', 'xa:]y', true], ['x[[:alpha:][:digit:]]y', 'xad]y', true],
+            ['x[:^a:]y', 'x^y', true],
+        ] as [$re, $v, $want]) {
+            self::assertSame($want, Regex::test(Regex::compile($re), $v), "$re vs $v");
+        }
+        self::assertTrue(Regex::test(Regex::compile('x[.a.]y', 'i'), 'xAy'));
+    }
+
     public function testJsDotEmptyClassAndWhitespaceMatchJs(): void
     {
         $t = static fn (string $re, string $v): bool => Regex::test(Regex::compile($re), $v);
