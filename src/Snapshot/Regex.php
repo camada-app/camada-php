@@ -79,7 +79,7 @@ final class Regex
         return @preg_match($p, '') === false ? null : $p;
     }
 
-    /** Runs `$walk` (one request's rule walk) under a fresh request regex budget, reset afterwards. */
+    /** Runs `$walk` (one request's whole match decision: rule walk plus the block side's meta pathsRegex) under a fresh request regex budget, reset afterwards. */
     public static function withBudget(callable $walk): mixed
     {
         self::$budgetNs = self::REQUEST_REGEX_BUDGET_MS * 1_000_000;
@@ -92,7 +92,7 @@ final class Regex
 
     /**
      * `$onFailure` is what an engine failure answers (backtrack or JIT stack limit, bad UTF): a deny
-     * rule passes true so a failure fails closed like an over-cap value; skip and the legacy list pass false.
+     * rule passes true so a failure fails closed like an over-cap value; skip passes false.
      */
     public static function test(?string $compiled, string $value, bool $onFailure = false): bool
     {

@@ -196,15 +196,15 @@ final class Matcher
      *
      * @param array<string, true> $exact
      * @param array<string, true> $prefix
-     * @param list<string> $regex
+     * @param list<\Closure(string): bool> $regex
      */
     private static function pathIn(array $exact, array $prefix, array $regex, string $p): bool
     {
         if (isset($exact[$p]) || ($prefix !== [] && Path::prefixed($prefix, $p))) {
             return true;
         }
-        foreach ($regex as $rx) {
-            if (Regex::test($rx, $p)) {
+        foreach ($regex as $pred) {
+            if ($pred($p)) {
                 return true;
             }
         }
@@ -312,35 +312,31 @@ final class Matcher
             }
         }
         $forms = Path::forms($i->path);
-        if ($s->rules !== []) {
-            $r = new RuleRequest(n4: $n4, ip6: $w, asn: $i->asn, country: $i->country, tlsx: $i->tlsx, paths: $forms, ua: $i->ua, header: $i->header);
-            $hit = Regex::withBudget(static function () use ($s, $r): ?CompiledRule {
+        return Regex::withBudget(function () use ($s, $i, $n4, $w, $forms): MatchResult {   // one budget across the rule walk and the block side
+            if ($s->rules !== []) {
+                $r = new RuleRequest(n4: $n4, ip6: $w, asn: $i->asn, country: $i->country, tlsx: $i->tlsx, paths: $forms, ua: $i->ua, header: $i->header);
                 foreach ($s->rules as $rule) {   // the order IS the precedence (§A4): first match wins
                     foreach ($rule->conds as $cond) {
                         if (!$cond($r)) {
                             continue 2;
                         }
                     }
-                    return $rule;
+                    return self::ruleResult($rule, $s->version);
                 }
-                return null;
-            });
-            if ($hit instanceof CompiledRule) {
-                return self::ruleResult($hit, $s->version);
             }
-        }
-        $reason = self::side($s->allow, $i, $n4, $w, $forms, false);
-        if ($reason !== null) {
-            return new MatchResult(allowed: true, reason: $reason, version: $s->version);
-        }
-        $reason = $this->blockSide($i, $n4, $w, $forms);
-        if ($reason !== null) {
-            return new MatchResult(block: true, reason: $reason, version: $s->version);
-        }
-        $reason = self::side($s->challenge, $i, $n4, $w, $forms, true);
-        if ($reason !== null) {
-            return new MatchResult(challenge: true, reason: $reason, version: $s->version);
-        }
-        return new MatchResult(version: $s->version);
+            $reason = self::side($s->allow, $i, $n4, $w, $forms, false);
+            if ($reason !== null) {
+                return new MatchResult(allowed: true, reason: $reason, version: $s->version);
+            }
+            $reason = $this->blockSide($i, $n4, $w, $forms);
+            if ($reason !== null) {
+                return new MatchResult(block: true, reason: $reason, version: $s->version);
+            }
+            $reason = self::side($s->challenge, $i, $n4, $w, $forms, true);
+            if ($reason !== null) {
+                return new MatchResult(challenge: true, reason: $reason, version: $s->version);
+            }
+            return new MatchResult(version: $s->version);
+        });
     }
 }
