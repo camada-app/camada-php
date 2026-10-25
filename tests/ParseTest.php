@@ -450,12 +450,10 @@ final class ParseTest extends TestCase
         }
     }
 
-    public function testClassOpeningPosixCharIsLiteralAsJsReadsIt(): void
+    public function testClassPosixCharIsLiteralAsJsReadsIt(): void
     {
-        foreach (['x[:alpha:]y', 'x[::]y', 'x[.a.]y', 'x[=a=]y', 'x[.a\.]y', 'x[.,;.]y'] as $re) {
-            self::assertNotNull(Regex::compile($re), $re);   // PCRE refuses these unescaped (POSIX class syntax)
-        }
-        foreach ([   // expected values from node
+        $t = static fn (string $re, string $v, string $f = ''): bool => Regex::test(Regex::compile($re, $f), $v);
+        foreach ([   // PCRE reads `[:` `[=` `[.` as POSIX syntax and refused these (fail open); expected values from node
             ['x[:alpha:]y', 'xly', true], ['x[:alpha:]y', 'x:y', true], ['x[:alpha:]y', 'xby', false],
             ['x[::]y', 'x:y', true], ['x[::]y', 'xay', false],
             ['x[.a.]y', 'x.y', true], ['x[.a.]y', 'xby', false],
@@ -467,12 +465,15 @@ final class ParseTest extends TestCase
             ['x[:-\s]y', 'x-y', true], ['x[:-\s]y', 'x y', true], ['x[:-\s]y', 'xay', false],
             ['x[:\s:]y', 'x y', true], ['x[:\s:]y', 'x:y', true], ['x[:\s:]y', 'xay', false],
             ['x[^:\s:]y', 'xay', true], ['x[^:\s:]y', 'x:y', false], ['x[^:\s:]y', 'x y', false],
+            ['x[\s:a:]y', 'x:y', true], ['x[\s:a:]y', 'xby', false], ['x[^\s:a:]y', 'x:y', false], ['x[^\s:a:]y', 'xby', true],
+            ['x[\S.a.]y', 'xby', true], ['x[\s=a=]y', 'x=y', true], ['x[\s.a.]y', 'x y', true], ['x[\s.a.]y', 'xby', false],
             ['x[[:alpha:][:digit:]]y', 'xa:]y', true], ['x[[:alpha:][:digit:]]y', 'xad]y', true],
             ['x[:^a:]y', 'x^y', true],
         ] as [$re, $v, $want]) {
-            self::assertSame($want, Regex::test(Regex::compile($re), $v), "$re vs $v");
+            self::assertNotNull(Regex::compile($re), $re);
+            self::assertSame($want, $t($re, $v), "$re vs $v");
         }
-        self::assertTrue(Regex::test(Regex::compile('x[.a.]y', 'i'), 'xAy'));
+        self::assertTrue($t('x[.a.]y', 'xAy', 'i'));
     }
 
     public function testJsDotEmptyClassAndWhitespaceMatchJs(): void
