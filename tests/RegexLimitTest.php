@@ -14,7 +14,7 @@ use PHPUnit\Framework\TestCase;
 final class RegexLimitTest extends TestCase
 {
     private const VECTORS = 'regex-limit/regex-limit-vectors.json';
-    private const SHA256 = 'ec076bfb26f12f0f90ffa42bb7b975c6f905afdfe01ba2caeedf6295dd533696';
+    private const SHA256 = 'da294143dd317792b38abc7097bb8185bfac32833d13d7a043f2101794a7c13b';
 
     /** @return array<string, mixed> */
     private static function vectors(): array
@@ -122,6 +122,22 @@ final class RegexLimitTest extends TestCase
         /** @var list<array{id: string, pattern: string, cases: list<array{ua: mixed, hit: array<string, bool>}>}> $refused */
         $refused = $v['refused'];
         foreach ($refused as $row) {
+            $rule = ['id' => $base['id'], 'action' => $base['action'], 'conds' => [['f' => $base['field'], 'op' => 'matches', 'v' => $row['pattern']]]];
+            foreach ($row['cases'] as $c) {
+                self::assertSame($c['hit']['native'], self::hits($rule, ['ip' => '8.8.8.8', 'ua' => $c['ua']]), $row['id']);
+            }
+        }
+    }
+
+    public function testAcceptedMatchRowsAnswerNative(): void
+    {
+        $v = self::vectors();
+        /** @var array<string, string> $base */
+        $base = $v['refused_rule'];
+        /** @var list<array{id: string, pattern: string, cases: list<array{ua: mixed, hit: array<string, bool>}>}> $accepted */
+        $accepted = $v['accepted_match'];
+        self::assertNotEmpty($accepted);
+        foreach ($accepted as $row) {
             $rule = ['id' => $base['id'], 'action' => $base['action'], 'conds' => [['f' => $base['field'], 'op' => 'matches', 'v' => $row['pattern']]]];
             foreach ($row['cases'] as $c) {
                 self::assertSame($c['hit']['native'], self::hits($rule, ['ip' => '8.8.8.8', 'ua' => $c['ua']]), $row['id']);
