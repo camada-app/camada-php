@@ -159,7 +159,7 @@ final class RegexLimitTest extends TestCase
     {
         $str = '123 0 1 true Array {"x"=>1} ["^/a"]';   // every coerced spelling of the values appears in the input
         $big = str_repeat('a', Parser::MAX_MATCH_INPUT + 1);
-        $in = static fn (): MatchInput => new MatchInput(
+        $in = new MatchInput(
             ip: '8.8.8.8',
             path: $over && $f === 'path' ? "/a/$str/$big" : "/a/$str",
             ua: $over && $f === 'ua' ? "$str $big" : $str,
@@ -167,8 +167,8 @@ final class RegexLimitTest extends TestCase
         );
         $cond = ['f' => $f, 'op' => 'matches', 'v' => $v] + ($f === 'header' ? ['name' => 'x-h'] : []);
         $blk = ['id' => 'cr_blk', 'action' => 'block', 'conds' => [['f' => 'ip', 'op' => 'is_not', 'v' => '1.1.1.1']]];
-        self::assertFalse(ParseTest::rulesSnapshot([['id' => 'cr_b', 'action' => 'block', 'conds' => [$cond]]])->match($in())->block);
-        $r = ParseTest::rulesSnapshot([['id' => 'cr_s', 'action' => 'skip', 'conds' => [$cond]], $blk])->match($in());
+        self::assertFalse(ParseTest::rulesSnapshot([['id' => 'cr_b', 'action' => 'block', 'conds' => [$cond]]])->match($in)->block);
+        $r = ParseTest::rulesSnapshot([['id' => 'cr_s', 'action' => 'skip', 'conds' => [$cond]], $blk])->match($in);
         self::assertSame('cr_blk', $r->rule);
     }
 }
