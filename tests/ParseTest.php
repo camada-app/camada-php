@@ -631,4 +631,29 @@ final class ParseTest extends TestCase
         self::assertSame('c', $m->match(new MatchInput(path: '/api/v2/dump'))->rule);
         self::assertSame(['/a%0a%7f', '/a%0a%7f', '/a%0a%7f'], Path::forms("/a\n\x7f"));
     }
+
+    public function testPathHitTriesARepeatedFormOnce(): void
+    {
+        $calls = 0;
+        $pred = static function (string $hit) use (&$calls): \Closure {
+            return static function (string $f) use (&$calls, $hit): bool {
+                $calls++;
+                return $f === $hit;
+            };
+        };
+        $canon = Path::forms('/a/b');
+        foreach ([true, false] as $deny) {
+            foreach (['/a/b', '/none'] as $want) {
+                $calls = 0;
+                self::assertSame($want === '/a/b', Path::hit($pred($want), $canon, $deny));
+                self::assertSame(1, $calls);
+            }
+        }
+        $calls = 0;
+        self::assertFalse(Path::hit($pred('/none'), ['/x', '/y', '/z'], true));
+        self::assertSame(3, $calls);
+        self::assertTrue(Path::hit($pred('/b'), ['/a', '/b', '/b'], true));
+        self::assertTrue(Path::hit($pred('/b'), ['/a', '/b', '/b'], false));
+        self::assertFalse(Path::hit($pred('/a'), ['/a', '/b', '/b'], false));
+    }
 }
