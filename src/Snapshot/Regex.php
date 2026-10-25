@@ -17,7 +17,7 @@ namespace Camada\Snapshot;
  * level, as JS reads them: `.` excludes \n \r U+2028 U+2029 (DOT); `[]` never matches (`(?!)`, a `]` right after
  * `[`/`[^` closes the class, a stray `]` is text); `\s`/`\S` are JS's Unicode whitespace (WS/NWS), and inside a class
  * they become a union with the rest of it (atomic, WS first, so a char matches one way only: no ReDoS), a `-` beside one
- * staying a literal dash, as does a `-` right after the atom that follows it; a literal `[` in a class is escaped (no
+ * staying a literal dash, as does a `-` right after the atom that follows it; a literal `[` in a class, and a first `:` `=` `.`, are escaped (no
  * POSIX classes, as in JS). An atom never starts inside a whitespace or line-terminator char (a lookbehind refuses its
  * continuation bytes; dropped when a huge repeat overflows PCRE). Inside a lookbehind `\s`/`\S` stay PCRE's ASCII ones
  * (WS is 1-3 bytes and PCRE2 < 10.43 needs a fixed-length lookbehind). A pattern PCRE still rejects never matches and
@@ -224,6 +224,9 @@ final class Regex
                 }
                 [$start, $pulled, $inClass] = [strlen($out), [], true];
                 $out .= substr($pattern, $i, $j - $i);
+                if (in_array($pattern[$j] ?? '', [':', '=', '.'], true)) {   // PCRE reads `[:` `[=` `[.` as a POSIX class opener
+                    $out .= '\\' . $pattern[$j++];
+                }
                 $i = $j;
                 continue;
             } elseif ($ch === '(') {
