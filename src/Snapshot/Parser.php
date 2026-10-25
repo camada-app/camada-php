@@ -23,6 +23,7 @@ namespace Camada\Snapshot;
  *   still ships its index word), so a rule with two ip conditions reads two pairs.
  * Meta travels separately: { version, country[], tls[], pathsExact[], pathsPrefix[], pathsRegex[],
  *                            allow?: side, challenge?: side, rules?: [] } with side = { asn[], country[], pathsExact[], pathsPrefix[] }.
+ * Each pathsRegex entry compiles like a path `matches` condition (case-insensitive, refused never matches).
  * The version byte is advisory: sections 10-15 are read whenever they are present.
  *
  * Only the header (2 + 3K words) and the small sections (10-15) are read here; the big ones are
@@ -167,15 +168,14 @@ final class Parser
         return $out;
     }
 
-    /** @return list<string> */
+    /** @return list<\Closure(string): bool> */
     private static function regexes(mixed $list): array
     {
         $out = [];
         if (is_array($list)) {
             foreach ($list as $p) {
-                $rx = is_string($p) ? Regex::compile($p, 'i') : null;   // path regexes are case-insensitive (§D3)
-                if ($rx !== null) {
-                    $out[] = $rx;
+                if (is_string($p)) {
+                    $out[] = Path::pred('matches', [$p], true);   // like a path `matches` condition: case-insensitive, refused never matches, over-cap or failure blocks
                 }
             }
         }

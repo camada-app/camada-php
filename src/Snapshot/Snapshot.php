@@ -11,7 +11,7 @@ final class Snapshot
      * @param array<string, true> $tls
      * @param array<string, true> $pathsExact
      * @param array<string, true> $pathsPrefix
-     * @param list<string> $pathsRegex compiled PCRE patterns (the ones this runtime accepted)
+     * @param list<\Closure(string): bool> $pathsRegex one predicate per entry, built like a path `matches` condition (a refused pattern never matches)
      * @param list<CompiledRule> $rules v5 only; empty on v3/v4, and the matcher then skips them
      */
     public function __construct(

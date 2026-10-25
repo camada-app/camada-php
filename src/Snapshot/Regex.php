@@ -92,7 +92,7 @@ final class Regex
 
     /**
      * `$onFailure` is what an engine failure answers (backtrack or JIT stack limit, bad UTF): a deny
-     * rule passes true so a failure fails closed like an over-cap value; skip and the legacy list pass false.
+     * rule passes true so a failure fails closed like an over-cap value; skip passes false.
      */
     public static function test(?string $compiled, string $value, bool $onFailure = false): bool
     {

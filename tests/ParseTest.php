@@ -163,6 +163,50 @@ final class ParseTest extends TestCase
         self::assertFalse(Regex::test(null, 'anything'));
     }
 
+    /** @param list<array<string, mixed>> $rules */
+    private static function metaRegex(array $patterns, array $rules = []): Matcher
+    {
+        return new Matcher(Parser::parse(new MemoryWords(self::container(0x424C4B35, [])), ['version' => 'v', 'pathsRegex' => $patterns, 'rules' => $rules]));
+    }
+
+    public function testMetaPathsRegexIsCaseInsensitive(): void
+    {
+        $m = self::metaRegex(['^/DUMP$']);
+        self::assertSame('path', $m->match(new MatchInput(path: '/dump'))->reason);
+        self::assertFalse($m->match(new MatchInput(path: '/dumpx'))->block);
+    }
+
+    public function testMetaPathsRegexRefusedPatternsNeverMatch(): void
+    {
+        $m = self::metaRegex(['(?>a)', '(?<=a']);
+        foreach (['/a', '/aa', '/(?>a)', '/'] as $p) {
+            self::assertFalse($m->match(new MatchInput(path: $p))->block, $p);
+        }
+    }
+
+    public function testMetaPathsRegexOverCapPathBlocks(): void
+    {
+        $m = self::metaRegex(['^/never$']);
+        $res = $m->match(new MatchInput(path: '/' . str_repeat('a', 2048)));   // 2049 units
+        self::assertTrue($res->block);
+        self::assertSame('path', $res->reason);
+        self::assertFalse($m->match(new MatchInput(path: '/' . str_repeat('a', 2047)))->block);
+    }
+
+    public function testMetaPathsRegexSharesTheRuleWalkBudget(): void
+    {
+        $rule = [['id' => 'h', 'action' => 'block', 'conds' => [['f' => 'header', 'op' => 'is', 'name' => 'x-spend', 'v' => 'never']]]];
+        $m = self::metaRegex(['^/never$'], $rule);
+        $spend = static function (string $n): ?string {
+            (new \ReflectionProperty(Regex::class, 'budgetNs'))->setValue(null, 0);   // the walk spends the open budget, then misses
+            return null;
+        };
+        $res = $m->match(new MatchInput(path: '/x', header: $spend));
+        self::assertTrue($res->block);
+        self::assertSame('path', $res->reason);
+        self::assertFalse($m->match(new MatchInput(path: '/x', header: static fn (string $n): ?string => null))->block);
+    }
+
     public function testEngineFailureFailsClosedForDenyRules(): void
     {
         $oldLimit = ini_get('pcre.backtrack_limit');
