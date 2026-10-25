@@ -293,12 +293,13 @@ final class Regex
         /** @var list<array{parent: int, alt: bool, min0: bool, neg: bool, lb: bool, end: int, rep: bool, opt: bool, la: bool, solid: bool, nullable: bool, holds: bool}> $frames  end is -1 while open */
         $frames = [['parent' => -1, 'alt' => false, 'min0' => false, 'neg' => false, 'lb' => false, 'end' => -1, 'rep' => false, 'opt' => false, 'la' => false, 'solid' => false, 'nullable' => false, 'holds' => false]];
         [$stack, $groups, $refs, $marks] = [[0], [], [], []];   // groups: [frame, name|null] in `(` order; refs: [name|number, is name, offset, end, frame]
-        [$n, $inClass, $quiet] = [strlen($p), false, 0];   // bytes before $quiet (a group header, a `\k<name>`) are no atoms
+        [$n, $inClass, $quiet, $classK] = [strlen($p), false, 0, false];   // bytes before $quiet (a group header, a `\k<name>`) are no atoms
         for ($i = 0; $i < $n;) {
             $ch = $p[$i];
             $top = $stack[count($stack) - 1];
             if ($ch === '\\') {
                 if ($inClass) {
+                    $classK = $classK || ($p[$i + 1] ?? '') === 'k';
                     $i += 2;
                     continue;
                 }
@@ -386,6 +387,9 @@ final class Regex
             if ($name !== null) {
                 $names[$name] ??= $k;
             }
+        }
+        if ($classK && $names !== []) {
+            return [true, [], []];   // JS: SyntaxError, a `\k` in a class beside a named group
         }
         $ord = [];
         foreach (array_keys($names) as $name) {
