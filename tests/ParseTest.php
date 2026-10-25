@@ -653,6 +653,12 @@ final class ParseTest extends TestCase
         self::assertFalse(Path::hit($pred('/none'), ['/x', '/y', '/z'], true));
         self::assertSame(3, $calls);
         self::assertTrue(Path::hit($pred('/b'), ['/a', '/b', '/b'], true));
+        $calls = 0;
+        self::assertFalse(Path::hit($pred('/none'), ['/a', '/b', '/b'], true));
+        self::assertSame(2, $calls);
+        $calls = 0;
+        self::assertFalse(Path::hit($pred('/none'), ['/a', '/b', '/c'], false));
+        self::assertSame(1, $calls);
         self::assertTrue(Path::hit($pred('/b'), ['/a', '/b', '/b'], false));
         self::assertFalse(Path::hit($pred('/a'), ['/a', '/b', '/b'], false));
     }
