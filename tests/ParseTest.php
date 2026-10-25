@@ -163,7 +163,10 @@ final class ParseTest extends TestCase
         self::assertFalse(Regex::test(null, 'anything'));
     }
 
-    /** @param list<array<string, mixed>> $rules */
+    /**
+     * @param list<string> $patterns
+     * @param list<array<string, mixed>> $rules
+     */
     private static function metaRegex(array $patterns, array $rules = []): Matcher
     {
         return new Matcher(Parser::parse(new MemoryWords(self::container(0x424C4B35, [])), ['version' => 'v', 'pathsRegex' => $patterns, 'rules' => $rules]));
