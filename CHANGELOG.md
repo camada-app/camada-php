@@ -8,6 +8,7 @@
 - feat: a non-HTML request (fetch/XHR/API) under a `challenge` row no longer gets a 403 JSON `challenge_required`: it passes to the app with `x-camada-challenge: 1` and `cache-control: no-store` (replacing the app's own), and its normal event ships with `chs: 1` even when the path is excluded or the request is sampled out. A page load still gets the challenge page. `serveChallenge()` returns null for a non-HTML request and signals it the same way. New `Context::$signalled`. (camada-all-7cgs)
 - fix (security): the first-party beacon relay (/_cam/fp) drops SDK-attested keys (tlsx, ja4, asn, cc, sid, ns, st, dur, rt, blk, rl, wrn, chs, ch, et, uid) from the visitor's body before queuing the sig:1 row, so a visitor cannot forge them; the analyst joins those from the request row. (camada-all-q617)
 - fix: a path condition tests each distinct spelling of the request path once, so an already-canonical path no longer runs (and spends the request's regex budget on) the same regex up to three times. (camada-all-p3zg)
+- fix (security): a `matches` regex with a `:`, `=` or `.` in a character class that PCRE read as POSIX syntax (`x[:alpha:]y`, `x[.a.]y`, `x[=a=]y`, also beside `\s`) used to fail to compile, so the rule never matched (failing open). Those characters are now escaped inside a class, so the rule matches as JS reads it: `[:alpha:]` is the set {`:` `a` `l` `p` `h`}. Deny rules that never fired on this SDK can start firing after upgrade. (camada-all-tv0m)
 
 ## 0.1.5 - 2026-10-19
 
