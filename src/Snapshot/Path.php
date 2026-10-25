@@ -126,7 +126,7 @@ final class Path
     public static function hit(\Closure $pred, array $forms, bool $deny): bool
     {
         if ($deny) {
-            // a form equal to one already tried cannot change the answer, so it is not matched again
+            // a form equal to one already tried is not matched again, so a repeat never spends the request's regex budget twice
             return $pred($forms[0])
                 || $forms[1] !== $forms[0] && $pred($forms[1])
                 || $forms[2] !== $forms[0] && $forms[2] !== $forms[1] && $pred($forms[2]);
