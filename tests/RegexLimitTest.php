@@ -116,28 +116,23 @@ final class RegexLimitTest extends TestCase
 
     public function testRefusedPatternsAnswerNative(): void
     {
-        $v = self::vectors();
-        /** @var array<string, string> $base */
-        $base = $v['refused_rule'];
-        /** @var list<array{id: string, pattern: string, cases: list<array{ua: mixed, hit: array<string, bool>}>}> $refused */
-        $refused = $v['refused'];
-        foreach ($refused as $row) {
-            $rule = ['id' => $base['id'], 'action' => $base['action'], 'conds' => [['f' => $base['field'], 'op' => 'matches', 'v' => $row['pattern']]]];
-            foreach ($row['cases'] as $c) {
-                self::assertSame($c['hit']['native'], self::hits($rule, ['ip' => '8.8.8.8', 'ua' => $c['ua']]), $row['id']);
-            }
-        }
+        $this->assertNative('refused');
     }
 
     public function testAcceptedMatchRowsAnswerNative(): void
     {
+        $this->assertNative('accepted_match');
+    }
+
+    private function assertNative(string $key): void
+    {
         $v = self::vectors();
         /** @var array<string, string> $base */
         $base = $v['refused_rule'];
-        /** @var list<array{id: string, pattern: string, cases: list<array{ua: mixed, hit: array<string, bool>}>}> $accepted */
-        $accepted = $v['accepted_match'];
-        self::assertNotEmpty($accepted);
-        foreach ($accepted as $row) {
+        /** @var list<array{id: string, pattern: string, cases: list<array{ua: mixed, hit: array<string, bool>}>}> $rows */
+        $rows = $v[$key];
+        self::assertNotEmpty($rows);
+        foreach ($rows as $row) {
             $rule = ['id' => $base['id'], 'action' => $base['action'], 'conds' => [['f' => $base['field'], 'op' => 'matches', 'v' => $row['pattern']]]];
             foreach ($row['cases'] as $c) {
                 self::assertSame($c['hit']['native'], self::hits($rule, ['ip' => '8.8.8.8', 'ua' => $c['ua']]), $row['id']);
