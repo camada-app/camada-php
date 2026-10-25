@@ -279,6 +279,11 @@ final class Parser
      */
     private static function compileCond(array $c, array &$sets, bool $deny): \Closure
     {
+        // camada-all-zpbv: a stored `matches` value that is '' or not a string never matches (no
+        // string-coercion into a regex; '' would match everything). First, so it also beats the over-cap fail-closed.
+        if ((string) ($c['op'] ?? '') === 'matches' && (!is_string($c['v'] ?? null) || $c['v'] === '')) {
+            return static fn (RuleRequest $r): bool => false;
+        }
         $f = (string) ($c['f'] ?? '');
         $op = (string) ($c['op'] ?? '');
         if ($f === 'path') {   // every path op reads the canonical forms (§D3 "Path matching"), never fieldValue
