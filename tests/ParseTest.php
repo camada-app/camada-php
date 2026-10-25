@@ -467,6 +467,8 @@ final class ParseTest extends TestCase
             ['x[^:\s:]y', 'xay', true], ['x[^:\s:]y', 'x:y', false], ['x[^:\s:]y', 'x y', false],
             ['x[\s:a:]y', 'x:y', true], ['x[\s:a:]y', 'xby', false], ['x[^\s:a:]y', 'x:y', false], ['x[^\s:a:]y', 'xby', true],
             ['x[\S.a.]y', 'xby', true], ['x[\s=a=]y', 'x=y', true], ['x[\s.a.]y', 'x y', true], ['x[\s.a.]y', 'xby', false],
+            ['x[.-:]y', 'x0y', true], ['x[.-:]y', 'x-y', false], ['x[+-.]y', 'x,y', true], ['x[+-.]y', 'xay', false],
+            ['x[!-=]y', 'x5y', true], ['x[!-=]y', 'xay', false],
             ['x[[:alpha:][:digit:]]y', 'xa:]y', true], ['x[[:alpha:][:digit:]]y', 'xad]y', true],
             ['x[:^a:]y', 'x^y', true],
         ] as [$re, $v, $want]) {
