@@ -135,7 +135,8 @@ final class RegexLimitTest extends TestCase
         foreach ($rows as $row) {
             $rule = ['id' => $base['id'], 'action' => $base['action'], 'conds' => [['f' => $base['field'], 'op' => 'matches', 'v' => $row['pattern']]]];
             foreach ($row['cases'] as $c) {
-                self::assertSame($c['hit']['native'], self::hits($rule, ['ip' => '8.8.8.8', 'ua' => $c['ua']]), $row['id']);
+                self::assertSame($c['hit']['native'], self::hits($rule, ['ip' => '8.8.8.8', 'ua' => $c['ua']]),
+                    $row['id'] . ' ua=' . json_encode($c['ua']));
             }
         }
     }
