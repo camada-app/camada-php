@@ -348,6 +348,9 @@ final class ParseTest extends TestCase
             self::assertNotNull(Regex::compile($re), $re);
             self::assertSame($want, $t($re, $v), $re . ' ~ ' . $v);
         }
+        self::assertNull(Regex::compile('(?<n>a)[\k]'));   // node: SyntaxError (Invalid escape)
+        self::assertNull(Regex::compile('(?<n>a)[\k<n>]'));
+        self::assertNotNull(Regex::compile('[\k]'));   // no named group: identity escape
         self::assertNull(Regex::compile('(?<a-b>x)\k<a-b>'));   // not a JS identifier
     }
 
