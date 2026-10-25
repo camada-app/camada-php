@@ -125,9 +125,13 @@ final class Path
      */
     public static function hit(\Closure $pred, array $forms, bool $deny): bool
     {
-        return $deny
-            ? $pred($forms[0]) || $pred($forms[1]) || $pred($forms[2])
-            : $pred($forms[1]) && $pred($forms[2]);
+        if ($deny) {
+            // a form equal to one already tried is not matched again, so a repeat never spends the request's regex budget twice
+            return $pred($forms[0])
+                || $forms[1] !== $forms[0] && $pred($forms[1])
+                || $forms[2] !== $forms[0] && $forms[2] !== $forms[1] && $pred($forms[2]);
+        }
+        return $pred($forms[1]) && ($forms[2] === $forms[1] || $pred($forms[2]));
     }
 
     /**
