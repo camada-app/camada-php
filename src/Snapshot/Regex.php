@@ -79,7 +79,7 @@ final class Regex
         return @preg_match($p, '') === false ? null : $p;
     }
 
-    /** Runs `$walk` (one request's rule walk) under a fresh request regex budget, reset afterwards. */
+    /** Runs `$walk` (one request's whole match decision: rule walk plus the block side's meta pathsRegex) under a fresh request regex budget, reset afterwards. */
     public static function withBudget(callable $walk): mixed
     {
         self::$budgetNs = self::REQUEST_REGEX_BUDGET_MS * 1_000_000;

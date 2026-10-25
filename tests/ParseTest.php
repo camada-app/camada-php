@@ -187,10 +187,10 @@ final class ParseTest extends TestCase
     public function testMetaPathsRegexOverCapPathBlocks(): void
     {
         $m = self::metaRegex(['^/never$']);
-        $res = $m->match(new MatchInput(path: '/' . str_repeat('a', 2048)));   // 2049 units
+        $res = $m->match(new MatchInput(path: '/' . str_repeat('a', Parser::MAX_MATCH_INPUT)));
         self::assertTrue($res->block);
         self::assertSame('path', $res->reason);
-        self::assertFalse($m->match(new MatchInput(path: '/' . str_repeat('a', 2047)))->block);
+        self::assertFalse($m->match(new MatchInput(path: '/' . str_repeat('a', Parser::MAX_MATCH_INPUT - 1)))->block);
     }
 
     public function testMetaPathsRegexSharesTheRuleWalkBudget(): void
