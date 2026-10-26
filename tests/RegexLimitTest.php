@@ -14,7 +14,7 @@ use PHPUnit\Framework\TestCase;
 final class RegexLimitTest extends TestCase
 {
     private const VECTORS = 'regex-limit/regex-limit-vectors.json';
-    private const SHA256 = 'b01e86bd2bead280081f58d31f7f517131d8cafa6144b8c27fe868e3c3959d56';
+    private const SHA256 = 'd549b323af4ba9b863a401a474da77baee46711832d1ef4241986bafc0bffc15';
 
     /** @return array<string, mixed> */
     private static function vectors(): array
@@ -116,15 +116,20 @@ final class RegexLimitTest extends TestCase
 
     public function testRefusedPatternsAnswerNative(): void
     {
-        $this->assertNative('refused');
+        $this->assertNative('refused', 'native');
     }
 
     public function testAcceptedMatchRowsAnswerNative(): void
     {
-        $this->assertNative('accepted_match');
+        $this->assertNative('accepted_match', 'native');
     }
 
-    private function assertNative(string $key): void
+    public function testAstralSplitAnswersPerEngine(): void
+    {
+        $this->assertNative('astral_split', 'php');
+    }
+
+    private function assertNative(string $key, string $engine): void
     {
         $v = self::vectors();
         /** @var array<string, string> $base */
@@ -135,7 +140,7 @@ final class RegexLimitTest extends TestCase
         foreach ($rows as $row) {
             $rule = ['id' => $base['id'], 'action' => $base['action'], 'conds' => [['f' => $base['field'], 'op' => 'matches', 'v' => $row['pattern']]]];
             foreach ($row['cases'] as $c) {
-                self::assertSame($c['hit']['native'], self::hits($rule, ['ip' => '8.8.8.8', 'ua' => $c['ua']]),
+                self::assertSame($c['hit'][$engine], self::hits($rule, ['ip' => '8.8.8.8', 'ua' => $c['ua']]),
                     $row['id'] . ' ua=' . json_encode($c['ua']));
             }
         }
