@@ -14,7 +14,7 @@ use PHPUnit\Framework\TestCase;
 final class RegexLimitTest extends TestCase
 {
     private const VECTORS = 'regex-limit/regex-limit-vectors.json';
-    private const SHA256 = 'b8628729ffe24963f3bf868842f77f644f57edeb7ec0f179208160e3060fffbb';
+    private const SHA256 = '5170b6c2f37da4a9c892b45e344a0d5ae49a6d99c9a5bfe0659809b5b90df7a0';
 
     /** @return array<string, mixed> */
     private static function vectors(): array
