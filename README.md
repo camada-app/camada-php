@@ -4,10 +4,10 @@ camada for PHP: enforces the tenant snapshot inline (your ordered custom rules, 
 block, challenge), serves a first-party proof-of-work challenge page and beacon, records the
 outcomes your handlers know (`track()`), and ships wire events in batches after the response has
 left. One package (`camada/camada`) with a plain front-controller adapter that needs
-nothing but `$_SERVER`, `php://input` and `header()` — FPM, `php -S`, mod_php — and a Laravel
+nothing but `$_SERVER`, `php://input` and `header()` (FPM, `php -S`, mod_php) and a Laravel
 middleware. Fails open by design: a camada outage or bug never 5xxes your app.
 
-Not yet on Packagist — install it from a sibling checkout with a path repository, as
+Not yet on Packagist: install it from a sibling checkout with a path repository, as
 [`camada-php-example`](https://github.com/camada-app/camada-php-example) does; publishing is one decision with the npm
 packages (SDK-G01). PHP 8.1 or newer, `ext-json` and `ext-zlib` (the snapshot travels gzipped),
 `ext-openssl` to reach an https analyst (the transport is a small HTTP/1.1 client over a stream
@@ -16,6 +16,14 @@ socket, so `allow_url_fopen` is not needed), no runtime dependencies.
 ```json
 { "repositories": [{ "type": "path", "url": "../camada-php" }], "require": { "camada/camada": "*@dev" } }
 ```
+
+## Documentation
+
+- [PHP SDK guide](https://www.camada.app/docs/php): options, file-backed cache, front-controller setup, and Laravel middleware.
+- Quickstarts: [Plain PHP](https://www.camada.app/docs/quickstart/php) and [Laravel](https://www.camada.app/docs/quickstart/laravel).
+- [In-app bot detection](https://www.camada.app/bot-detection): how camada stops credential stuffing, fake signups, and scrapers.
+- [Test your bot signals](https://www.camada.app/tools/bot-test): live browser, HTTP, and TLS signal inspector.
+- [Docs](https://www.camada.app/docs) and [Pricing](https://www.camada.app/pricing): full reference and plan limits.
 
 ## Quickstart
 
@@ -90,11 +98,11 @@ in the **post-response phase**, after the client has its bytes: under FPM and Fr
 buffer is flushed with a `Content-Length` so the client can stop reading. Then, in order: the
 request's event is appended to the spool; a due spool (≥ 500 rows, or 15 s since the last flush)
 is renamed to a private file and POSTed to `/e` in slices of ≤ 1000; a due snapshot (stale: 0.9 ×
-the poll cadence, and past the failure gate) is fetched under `refresh.lock`, non-blocking — a busy
+the poll cadence, and past the failure gate) is fetched under `refresh.lock`, non-blocking: a busy
 lock means another worker is on it.
 
 Consequences worth knowing: the first request after a deploy (or an emptied cache) is answered
-cold — it passes (fail open) and arms the refresh; the next request enforces. A request whose
+cold: it passes (fail open) and arms the refresh; the next request enforces. A request whose
 spool is due ships it, so a quiet site ships its last events on its next hit, not on a timer. The
 cache dir must be a local, writable directory (`flock()` and `rename()` are the concurrency
 model; a network mount is not). Each container or host keeps its own copy.
@@ -120,7 +128,7 @@ if ($cam->snap !== null) {                    // null when CAMADA_KEY is unset o
 
 1. Keeps the snapshot fresh (above): ETag/304 and gzip on the wire, at the cadence your tenant
    config sets (`poll_seconds`). Every poll and event batch carries `x-camada-sdk:
-   @camada/php/<version>`, and polls ask for snapshot v5 (`x-camada-snapshot: 5`) — the
+   @camada/php/<version>`, and polls ask for snapshot v5 (`x-camada-snapshot: 5`), the
    container that carries your ordered custom rules.
 2. Resolves the client from the socket peer (`$_SERVER['REMOTE_ADDR']`), combined with
    `X-Forwarded-For` only under your tenant's trusted-proxy config (or `CAMADA_TRUSTED_PROXY`
@@ -219,8 +227,8 @@ A request flagged late (by `serveChallenge()` from inside the app) is stamped th
 ## What this tap can see
 
 `sdk-php` is an in-app tap: status, latency, session, the beacon's browser signals and your
-outcomes. Header order is whatever `getallheaders()` yields — a hash under FastCGI — so this tap ships no header-order signal; camada resolves ASN and country itself.
-Enforcement at this position covers ip, path, user-agent and header conditions — ASN, country
+outcomes. Header order is whatever `getallheaders()` yields (a hash under FastCGI), so this tap ships no header-order signal; camada resolves ASN and country itself.
+Enforcement at this position covers ip, path, user-agent and header conditions: ASN, country
 and TLS entries fail open in-app. `matches` patterns are JS regexes read by PCRE without the `u`
 flag (named groups and `\cX` are native, `[^]` is translated, `\d`/`\w`/`\b` stay ASCII); a
 spelling PCRE still rejects never matches here, while it does at the edge. A non-ASCII character is
@@ -232,7 +240,7 @@ quantifier (`é?`, `é+`, `[é]`) can disagree, and under the `i` flag only ASCI
 ## Deploying it
 
 - FPM, FrankenPHP (classic mode), LiteSpeed: the response ends with `fastcgi_finish_request()`
-  and the post-response work runs in the same worker afterwards — a slow analyst costs that
+  and the post-response work runs in the same worker afterwards: a slow analyst costs that
   worker's availability for the poll's duration (3 s timeout), never the client's latency.
 - `php -S`, mod_php: the fallback flushes the adapter's buffer with a `Content-Length`; a client
   that honours it (browsers, curl, node) stops reading before the deferred work runs. Run the CLI
@@ -261,8 +269,8 @@ composer install && composer lint && composer fmt && composer test
 ```
 
 The suite reads the golden snapshot fixtures from the `camada-core` sibling checkout (or
-`CAMADA_FIXTURES_DIR`) and runs every case over both word sources — the seeking one a request
-uses and the in-memory one — which is what proves the seeking matcher equals the reference. It
+`CAMADA_FIXTURES_DIR`) and runs every case over both word sources (the seeking one a request
+uses and the in-memory one), which is what proves the seeking matcher equals the reference. It
 pins the vendored beacon to `camada-browser/dist/auto.global.js` (`npm run build` there first,
 then `php scripts/sync-beacon.php` after a beacon release). Both fail by name when the checkout
 is missing rather than skipping. The SAPI suite drives the adapter over a real `php -S`.
