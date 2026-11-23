@@ -72,10 +72,14 @@ final class Redact
         return preg_match(self::ESC_RE, $s) === 1 ? null : $s;
     }
 
-    /** Lowercase A-Z only, then a substring test: ASCII-only case folding by construction. */
+    public static function asciiLower(string $value): string
+    {
+        return strtr($value, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
+    }
+
     private static function nameHit(string $n): bool
     {
-        return preg_match(self::NAME_RE, strtr($n, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')) === 1;
+        return preg_match(self::NAME_RE, self::asciiLower($n)) === 1;
     }
 
     /** A decoded value carrying `?`, `&` or `=` is a credential when one of its `[?&]` segments is (no further decoding). */
@@ -142,15 +146,15 @@ final class Redact
     }
 
     /**
-     * @param list<int|string> $post
-     * @param list<int|string> $files
+     * @param array<int|string, mixed> $post
+     * @param array<int|string, mixed> $files
      * @return list<string>|null
      */
     public static function fieldNames(array $post, array $files): ?array
     {
         $out = $seen = [];
-        foreach ([$post, $files] as $keys) {
-            foreach ($keys as $key) {
+        foreach ([$post, $files] as $fields) {
+            foreach ($fields as $key => $_) {
                 $name = (string) $key;
                 $name = self::suspectValue($name) ? '~r' : substr($name, 0, 64);
                 $name = preg_replace('/[^A-Za-z0-9_.-]/', '~', $name);
@@ -173,23 +177,46 @@ final class Redact
      */
     public static function hashUserId(string $userId, string $ingestToken): string
     {
-        return substr(hash_hmac('sha256', 'uid:' . $userId, $ingestToken), 0, 32);
+        return self::hashLabelled('uid:', $userId, $ingestToken);
+    }
+
+    // Only a real auth-scheme token followed by a space ever ships.
+    public static function authScheme(?string $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        $sp = strpos($value, ' ');
+        if ($sp === false || $sp === 0) {
+            return null;
+        }
+        $scheme = substr($value, 0, $sp);
+        return preg_match(self::SCHEME_RE, $scheme) === 1 ? $scheme : null;
     }
 
     public static function tokenCredential(?string $value, bool $schemeSplit): ?string
     {
         $v = trim($value ?? '', " \t");
-        if ($schemeSplit) {
-            $sp = strpos($v, ' ');
-            if ($sp !== false && $sp > 0 && preg_match(self::SCHEME_RE, substr($v, 0, $sp)) === 1) {
-                $v = ltrim(substr($v, $sp + 1), " \t");
-            }
+        if ($schemeSplit && ($scheme = self::authScheme($v)) !== null) {
+            $v = ltrim(substr($v, strlen($scheme) + 1), " \t");
         }
         return preg_match('/\A[\x20-\x7e]{8,}\z/', $v) === 1 ? $v : null;
     }
 
+    /** @param array<int|string, string> $first */
+    public static function selectCredential(array $first, ?string $tokenHeader): ?string
+    {
+        $extra = $tokenHeader === null ? null : self::tokenCredential($first[$tokenHeader] ?? null, false);
+        return $extra ?? self::tokenCredential($first['authorization'] ?? null, true);
+    }
+
     public static function hashToken(string $credential, string $ingestToken): string
     {
-        return substr(hash_hmac('sha256', 'tok:' . $credential, $ingestToken), 0, 32);
+        return self::hashLabelled('tok:', $credential, $ingestToken);
+    }
+
+    private static function hashLabelled(string $label, string $value, string $key): string
+    {
+        return substr(hash_hmac('sha256', $label . $value, $key), 0, 32);
     }
 }

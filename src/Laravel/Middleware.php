@@ -45,6 +45,7 @@ final class Middleware
         $eng = $this->engine();
         try {
             $req = Sapi::request($request->server->all());
+            // Laravel can populate the request bag with decoded JSON.
             $ct = $request->server->get('CONTENT_TYPE');
             $form = is_string($ct) && Builder::formType($ct) !== null;
             $req = new \Camada\Req(
@@ -56,8 +57,8 @@ final class Middleware
                 peer: $request->server->get('REMOTE_ADDR'),
                 https: $request->isSecure(),
                 headers: $req->headers,
-                postKeys: $form ? $request->request->keys() : [],
-                fileKeys: $form ? $request->files->keys() : [],
+                post: $form ? $request->request->all() : [],
+                files: $form ? $request->files->all() : [],
             );
             $limit = $eng->wantsBody($req->method, $req->path);
             $body = $limit !== null ? self::body($request, $limit) : null;

@@ -13,8 +13,8 @@ final class Req
 {
     /**
      * @param list<array{string, string}> $headers (lowercased name, value) pairs in host order
-     * @param list<int|string> $postKeys raw form keys before the app runs
-     * @param list<int|string> $fileKeys raw uploaded-file keys before the app runs
+     * @param array<int|string, mixed> $post parsed body before the app runs
+     * @param array<int|string, mixed> $files parsed uploaded files before the app runs
      */
     public function __construct(
         public readonly string $method,
@@ -26,8 +26,8 @@ final class Req
         public readonly bool $https = false,
         public readonly array $headers = [],
         public ?string $route = null,                 // the matched route pattern, when the host knows it at finish time
-        public readonly array $postKeys = [],
-        public readonly array $fileKeys = [],
+        public readonly array $post = [],
+        public readonly array $files = [],
     ) {
     }
 

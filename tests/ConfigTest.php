@@ -44,9 +44,11 @@ final class ConfigTest extends TestCase
 
     public function testTokenHeaderUsesOnlyAsciiAndRejectsReservedNames(): void
     {
-        self::assertSame('x-api-key', Config::normalizeTokenHeader('X-API-Key'));
+        self::assertSame(['x-api-key', false], Config::resolveTokenHeader('X-API-Key', 'X-Env-Key'));
+        self::assertSame(['x-env-key', false], Config::resolveTokenHeader('', 'X-Env-Key'));
+        self::assertSame([null, false], Config::resolveTokenHeader(null, ''));
         foreach (['Authorization', 'COOKIE', 'Set-Cookie', "x-key\n", 'X-Key', str_repeat('x', 65)] as $invalid) {
-            self::assertNull(Config::normalizeTokenHeader($invalid), $invalid);
+            self::assertSame([null, true], Config::resolveTokenHeader($invalid, 'X-Env-Key'), $invalid);
         }
     }
 

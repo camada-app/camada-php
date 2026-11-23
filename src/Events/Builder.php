@@ -21,25 +21,16 @@ final class Builder
         'via', 'x-forwarded-for', 'priority', 'sec-purpose', 'save-data', 'te', 'if-modified-since', 'if-none-match',
     ];
 
-    // Only a real auth-scheme token followed by a space ever ships.
     public static function authScheme(?string $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-        $sp = strpos($value, ' ');
-        if ($sp === false || $sp === 0) {
-            return null;
-        }
-        $scheme = substr($value, 0, $sp);
-        return preg_match(Redact::SCHEME_RE, $scheme) === 1 ? $scheme : null;
+        return Redact::authScheme($value);
     }
 
     /** @return 'urlencoded'|'multipart'|null */
     public static function formType(?string $contentType): ?string
     {
         $mediaType = trim(explode(';', $contentType ?? '', 2)[0], " \t");
-        return match (strtr($mediaType, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')) {
+        return match (Redact::asciiLower($mediaType)) {
             'application/x-www-form-urlencoded' => 'urlencoded',
             'multipart/form-data' => 'multipart',
             default => null,
@@ -54,7 +45,6 @@ final class Builder
     /**
      * The mutable wire event; the caller fills st/dur on response-finish before spooling it.
      *
-     * @param (\Closure(string): ?string)|null $tokenHasher
      * @return array<string, mixed>
      */
     public static function wireEvent(
@@ -65,9 +55,7 @@ final class Builder
         ?string $sid = null,
         bool $newSession = false,
         ?string $ja4 = null,
-        ?string $tokenHeader = null,
-        ?\Closure $tokenHasher = null,
-        string|false $progressName = false,
+        ?RowOptions $options = null,
     ): array {
         static $bits = null;
         if ($bits === null) {
@@ -94,9 +82,7 @@ final class Builder
                 $cookie = $cookie !== '' ? $cookie . '; ' . $value : $value;
             }
         }
-        // An extra token header can overlap a header whose value usually ships in the row.
-        $privateHeader = $tokenHasher !== null ? $tokenHeader : null;
-        $h = static fn (string $k): ?string => $k === $privateHeader ? null : ($first[$k] ?? null);
+        $h = static fn (string $k): ?string => $first[$k] ?? null;
         $query = $r->query;
         $qn = strlen($query) > 1 ? count(array_filter(explode('&', substr($query, 1)), static fn (string $p): bool => $p !== '')) : 0;
         $ev = [
@@ -115,10 +101,9 @@ final class Builder
         if ($ja4 !== null && $ja4 !== '') {
             $ev['ja4'] = $ja4;
         }
-        if ($tokenHasher !== null) {
+        if (($tokenHasher = $options?->tokenHasher) !== null) {
             try {
-                $credential = $tokenHeader === null ? null : Redact::tokenCredential($first[$tokenHeader] ?? null, false);
-                $credential ??= Redact::tokenCredential($first['authorization'] ?? null, true);
+                $credential = Redact::selectCredential($first, $options->tokenHeader);
                 if ($credential !== null) {
                     $tk = $tokenHasher($credential);
                     if ($tk !== null && $tk !== '') {
@@ -130,17 +115,12 @@ final class Builder
             }
         }
         try {
-            $form = $r->postKeys === [] && $r->fileKeys === [] ? null : self::formType($first['content-type'] ?? null);
-            if ($form === 'multipart' && $progressName !== false && $progressName !== '') {
-                foreach ($r->postKeys as $key) {
-                    if ((string) $key === $progressName) {
-                        $ev['upf'] = 1;
-                        break;
-                    }
+            if (($r->post !== [] || $r->files !== []) && ($form = self::formType($h('content-type'))) !== null) {
+                $progressName = $options->progressName ?? false;
+                if ($form === 'multipart' && $progressName !== false && $progressName !== '' && array_key_exists($progressName, $r->post)) {
+                    $ev['upf'] = 1;
                 }
-            }
-            if ($form !== null) {
-                $fields = Redact::fieldNames($r->postKeys, $r->fileKeys);
+                $fields = Redact::fieldNames($r->post, $r->files);
                 if ($fields !== null) {
                     $ev['bf'] = $fields;
                 }

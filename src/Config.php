@@ -39,14 +39,17 @@ final class Config
         return $option ?? ($env === '1');
     }
 
-    public static function normalizeTokenHeader(?string $name): ?string
+    /** @return array{?string, bool} The normalized name and whether the selected name was invalid. */
+    public static function resolveTokenHeader(?string $option, ?string $env): array
     {
-        if ($name === null) {
-            return null;
+        $name = $option !== null && $option !== '' ? $option : $env;
+        if ($name === null || $name === '') {
+            return [null, false];
         }
-        $name = strtr($name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
-        return preg_match('/\A[a-z0-9-]{1,64}\z/', $name) === 1
-            && !in_array($name, ['authorization', 'cookie', 'set-cookie'], true) ? $name : null;
+        $name = Redact::asciiLower($name);
+        $valid = preg_match('/\A[a-z0-9-]{1,64}\z/', $name) === 1
+            && !in_array($name, ['authorization', 'cookie', 'set-cookie'], true);
+        return [$valid ? $name : null, !$valid];
     }
 
     /**

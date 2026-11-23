@@ -7,6 +7,7 @@ namespace Camada\Tests;
 use Camada\Camada;
 use Camada\Challenge\Page;
 use Camada\Context;
+use Camada\Events\RowOptions;
 use Camada\Guarded;
 use Camada\Redact;
 use Camada\Req;
@@ -176,8 +177,8 @@ final class EngineTest extends TestCase
     public function testATokenHasherThrowLeavesTheAppAndBlockIntact(): void
     {
         $h = $this->host(tokenHash: true);
-        $hasher = new \ReflectionProperty(Camada::class, 'tokenHasher');
-        $hasher->setValue($h->engine, static fn (string $token): never => throw new \RuntimeException($token));
+        $options = new \ReflectionProperty(Camada::class, 'rowOptions');
+        $options->setValue($h->engine, new RowOptions(tokenHasher: static fn (string $token): never => throw new \RuntimeException($token)));
         $headers = [['authorization', 'Bearer fake-token-0001-not-a-real-credential']];
         $ok = $h(new Call(headers: $headers));
         self::assertSame(200, $ok->status);

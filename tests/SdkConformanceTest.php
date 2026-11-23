@@ -6,6 +6,7 @@ namespace Camada\Tests;
 
 use Camada\Config;
 use Camada\Events\Builder;
+use Camada\Events\RowOptions;
 use Camada\Ip;
 use Camada\Redact;
 use Camada\Req;
@@ -112,16 +113,15 @@ final class SdkConformanceTest extends TestCase
     #[DataProvider('tokenCases')]
     public function testTokenRedaction(string $key, ?string $header, array $headers, ?string $credential, ?string $tk): void
     {
-        $header = Config::normalizeTokenHeader($header);
-        $picked = $header === null ? null : Redact::tokenCredential($headers[$header] ?? null, false);
-        $picked ??= Redact::tokenCredential($headers['authorization'] ?? null, true);
-        self::assertSame($credential, $picked);
+        [$header] = Config::resolveTokenHeader($header, null);
+        self::assertSame($credential, Redact::selectCredential($headers, $header));
         $pairs = [];
         foreach ($headers as $name => $value) {
             $pairs[] = [$name, $value];
         }
         $req = new Req('GET', '/', headers: $pairs);
-        $ev = Builder::wireEvent($req, null, 'sdk-php', 'r1', tokenHeader: $header, tokenHasher: static fn (string $token): string => Redact::hashToken($token, $key));
+        $options = new RowOptions($header, static fn (string $token): string => Redact::hashToken($token, $key));
+        $ev = Builder::wireEvent($req, null, 'sdk-php', 'r1', options: $options);
         if ($tk === null) {
             self::assertArrayNotHasKey('tk', $ev);
         } else {
