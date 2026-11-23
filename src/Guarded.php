@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Camada;
 
+use Camada\Runtime\Lock;
+
 /**
  * The fail-open envelope: a camada bug must never 5xx the customer. Every public entry point of
  * the SDK catches, falls back, and reports through Guarded::log(): at most one line a minute —
@@ -14,12 +16,44 @@ final class Guarded
 {
     private static ?string $stamp = null;
     private static float $lastLog = 0.0;
+    private static ?string $warnStamp = null;
+    private static bool $warned = false;
 
-    /** The stamp file that keeps the rate limit shared across processes; null falls back to this process's clock. */
-    public static function useStamp(?string $path): void
+    /** Set the separate shared budgets for errors and configuration warnings. */
+    public static function useStamp(?string $path, ?string $warnPath = null): void
     {
         self::$stamp = $path;
         self::$lastLog = 0.0;
+        self::$warnStamp = $warnPath;
+    }
+
+    public static function warn(string $message): void
+    {
+        try {
+            $stamped = false;
+            $stamp = self::$warnStamp;
+            // Lock the stamp itself so only one worker can claim an expired budget.
+            if ($stamp !== null && ($lock = Lock::acquire($stamp)) !== null) {
+                try {
+                    $now = time();
+                    if ($now - (int) @file_get_contents($stamp) < 3600) {
+                        return;
+                    }
+                    $stamped = @file_put_contents($stamp, (string) $now) !== false;
+                } finally {
+                    $lock->release();
+                }
+            }
+            if (!$stamped) {
+                if (self::$warned) {
+                    return;
+                }
+                self::$warned = true;
+            }
+            error_log('[camada] config warning: ' . $message);
+        } catch (\Throwable) {
+            // even logging must not throw
+        }
     }
 
     public static function log(mixed $err): void

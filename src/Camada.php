@@ -86,11 +86,11 @@ class Camada
             return;
         }
         $cache = new Cache(Cache::defaultDir($this->env->snapToken, $this->env->cacheDir));
-        Guarded::useStamp($cache->path('log.stamp'));   // one log line a minute across every worker, not per process
+        Guarded::useStamp($cache->path('log.stamp'), $cache->path('warn.stamp'));
         $envHeader = $source['CAMADA_TOKEN_HEADER'] ?? null;
         [$header, $invalidHeader] = Config::resolveTokenHeader($tokenHeader, is_string($envHeader) ? $envHeader : null);
         if ($invalidHeader) {
-            Guarded::log('invalid or forbidden token header name');
+            Guarded::warn('invalid or forbidden token header name');
         }
         $tokenHasher = null;
         if (Config::tokenHashEnabled($tokenHash, $source['CAMADA_TOKEN_HASH'] ?? null)) {

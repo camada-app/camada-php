@@ -90,6 +90,7 @@ final class LaravelTest extends TestCase
         $baseline = self::request('GET', '/');
         $mw->terminate($baseline, $mw->handle($baseline, static fn (): Response => new Response('app')));
         $small = Request::create('/', 'POST', $fields + [$progress => $sentinel], [], $files, $server);
+        $small->server->set('CONTENT_TYPE', 'application/octet-stream');
         for ($i = 0; $i < 300; $i++) {
             $fields["junk{$i}"] = $sentinel;
         }
@@ -105,7 +106,7 @@ final class LaravelTest extends TestCase
             $mw->terminate($req, $res);
         }
         [$baseRow, $smallRow, $largeRow] = $this->events($engine);
-        self::assertSame(['text', $progress, 'upload'], $smallRow['bf']);
+        self::assertSame(['text', $progress, 'upload'], $smallRow['bf'] ?? null);
         self::assertSame(['text', ...array_slice(array_keys($fields), 1, 31)], $largeRow['bf']);
         foreach ([$smallRow, $largeRow] as $row) {
             self::assertSame(200, $row['st']);
@@ -122,20 +123,28 @@ final class LaravelTest extends TestCase
         $engine = $this->engine();
         $mw = new Middleware($engine);
         $empty = self::request('POST', '/', server: ['CONTENT_TYPE' => 'application/x-www-form-urlencoded'], content: '');
-        $json = Request::createFromBase(\Symfony\Component\HttpFoundation\Request::create(
-            '/',
-            'POST',
-            server: ['CONTENT_TYPE' => 'application/json'],
-            content: '{"PHP_SESSION_UPLOAD_PROGRESS":"private-form-value-test"}',
-        ));
-        self::assertSame(['PHP_SESSION_UPLOAD_PROGRESS'], $json->request->keys());
-        foreach ([$empty, $json] as $req) {
+        $progress = ini_get('session.upload_progress.name');
+        self::assertIsString($progress);
+        self::assertNotSame('', $progress);
+        $requests = [$empty];
+        foreach (['application/json', 'multipart/form-data; boundary=x+json'] as $type) {
+            $json = Request::createFromBase(\Symfony\Component\HttpFoundation\Request::create(
+                '/',
+                'POST',
+                server: ['CONTENT_TYPE' => $type],
+                content: json_encode([$progress => 'private-form-value-test'], JSON_THROW_ON_ERROR),
+            ));
+            self::assertTrue($json->isJson());
+            self::assertSame([$progress], $json->request->keys());
+            $requests[] = $json;
+        }
+        foreach ($requests as $req) {
             $res = $mw->handle($req, static fn (): Response => new Response('app'));
             self::assertSame(200, $res->getStatusCode());
             $mw->terminate($req, $res);
         }
         $rows = $this->events($engine);
-        self::assertSame([200, 200], array_column($rows, 'st'));
+        self::assertSame([200, 200, 200], array_column($rows, 'st'));
         foreach ($rows as $row) {
             self::assertArrayNotHasKey('bf', $row);
             self::assertArrayNotHasKey('upf', $row);

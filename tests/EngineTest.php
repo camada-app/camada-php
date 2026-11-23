@@ -174,6 +174,27 @@ final class EngineTest extends TestCase
         }
     }
 
+    public function testTokenHeaderWarningsAreDampedWithoutSuppressingErrors(): void
+    {
+        $dir = $this->dir();
+        $log = $dir . '/test.log';
+        $prev = ini_set('error_log', $log);
+        try {
+            Driver::engineWith($this->a, $dir, tokenHeader: 'Cookie');
+            Guarded::log('test fail-open error');
+            $stamp = $dir . '/warn.stamp';
+            self::assertFileExists($stamp);
+            file_put_contents($stamp, (string) (time() - 120));
+            Driver::engineWith($this->a, $dir, tokenHeader: 'Cookie');
+            $out = (string) file_get_contents($log);
+            self::assertSame(1, substr_count($out, 'invalid or forbidden token header name'), $out);
+            self::assertStringContainsString('[camada] config warning: invalid or forbidden token header name', $out);
+            self::assertStringContainsString('[camada] suppressed error (SDK fails open): test fail-open error', $out);
+        } finally {
+            ini_set('error_log', $prev === false ? '' : $prev);
+        }
+    }
+
     public function testATokenHasherThrowLeavesTheAppAndBlockIntact(): void
     {
         $h = $this->host(tokenHash: true);

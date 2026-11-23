@@ -204,9 +204,10 @@ upload progress tracking is disabled.
 
 ## Credential hashes
 
-Credential hashing is off by default. Set `CAMADA_TOKEN_HASH=1` for `Camada::default()`, or opt in
-with `new Camada(tokenHash: true)`. In Laravel, pass it as
-`new Middleware(new Camada(tokenHash: true))`. An explicit `tokenHash: false` overrides the environment.
+Credential hashing is off by default. In plain PHP, set `CAMADA_TOKEN_HASH=1` or pass
+`new Camada(tokenHash: true)` to `Sapi::run()`. In Laravel, set the same environment variable
+or call `Camada::setDefault(new Camada(tokenHash: true))` in a service provider.
+An explicit `tokenHash: false` overrides the environment.
 
 The SDK tries the extra header named by `tokenHeader` or `CAMADA_TOKEN_HEADER` first, then
 `Authorization`. A nonempty option takes precedence over the environment. The name may contain up

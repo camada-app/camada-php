@@ -44,10 +44,10 @@ final class Middleware
     {
         $eng = $this->engine();
         try {
-            $req = Sapi::request($request->server->all());
+            $ct = $request->headers->get('content-type');
+            $req = Sapi::request(array_replace($request->server->all(), ['CONTENT_TYPE' => $ct, 'HTTP_CONTENT_TYPE' => $ct]));
             // Laravel can populate the request bag with decoded JSON.
-            $ct = $request->server->get('CONTENT_TYPE');
-            $form = is_string($ct) && Builder::formType($ct) !== null;
+            $form = !$request->isJson() && Builder::formType($ct) !== null;
             $req = new \Camada\Req(
                 method: $request->getMethod(),
                 path: $request->getPathInfo(),
