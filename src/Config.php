@@ -34,6 +34,21 @@ final class Config
         return [substr($key, 0, $dot), substr($key, $dot + 1)];
     }
 
+    public static function tokenHashEnabled(?bool $option, mixed $env): bool
+    {
+        return $option ?? ($env === '1');
+    }
+
+    public static function normalizeTokenHeader(?string $name): ?string
+    {
+        if ($name === null) {
+            return null;
+        }
+        $name = strtr($name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
+        return preg_match('/\A[a-z0-9-]{1,64}\z/', $name) === 1
+            && !in_array($name, ['authorization', 'cookie', 'set-cookie'], true) ? $name : null;
+    }
+
     /**
      * CAMADA_TRUSTED_PROXY: none | vercel | hops:N | cidrs:a,b. Unset or malformed returns null,
      * which callers treat as "defer to the server-delivered tenant config", never as trust.

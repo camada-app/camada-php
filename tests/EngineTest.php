@@ -8,9 +8,11 @@ use Camada\Camada;
 use Camada\Challenge\Page;
 use Camada\Context;
 use Camada\Guarded;
+use Camada\Redact;
 use Camada\Req;
 use Camada\Runtime\Deferred;
 use Camada\Version;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -104,6 +106,91 @@ final class EngineTest extends TestCase
         self::assertSame('/admin', $ev['p']);
         self::assertSame('sdk-php', $ev['tap']);
         self::assertArrayNotHasKey('rl', $ev);
+    }
+
+    /** @return iterable<string, array{?bool, array<string, string>, bool}> */
+    public static function tokenFlags(): iterable
+    {
+        yield 'default off' => [null, [], false];
+        yield 'option on' => [true, [], true];
+        yield 'env on' => [null, ['CAMADA_TOKEN_HASH' => '1'], true];
+        yield 'option overrides env' => [false, ['CAMADA_TOKEN_HASH' => '1'], false];
+        yield 'env true is off' => [null, ['CAMADA_TOKEN_HASH' => 'true'], false];
+    }
+
+    /** @param array<string, string> $env */
+    #[DataProvider('tokenFlags')]
+    public function testTokenHashOnRequestRows(?bool $option, array $env, bool $enabled): void
+    {
+        $this->a->container = 'v4';
+        $this->a->config['tokenHash'] = true;
+        $h = $this->host($env, tokenHash: $option);
+        $credential = 'fake-token-0001-not-a-real-credential';
+        $headers = [...self::HTML, ['authorization', 'Bearer ' . $credential]];
+        self::assertSame(200, $h(new Call('GET', '/', headers: $headers))->status);
+        self::assertSame(403, $h(new Call('GET', '/', headers: $headers, peer: FakeAnalyst::BLOCKED_IP))->status);
+        self::assertSame(403, $h(new Call('GET', '/', headers: $headers, peer: FakeAnalyst::CHALLENGED_IP))->status);
+        $rows = $this->events($h);
+        self::assertSame([200, 403, 403], array_column($rows, 'st'));
+        self::assertSame('challenge', $rows[2]['blk']);
+        foreach ($rows as $row) {
+            if ($enabled) {
+                self::assertSame(Redact::hashToken($credential, 'tok-test'), $row['tk']);
+            } else {
+                self::assertArrayNotHasKey('tk', $row);
+            }
+        }
+        self::assertStringNotContainsString($credential, json_encode($rows, JSON_THROW_ON_ERROR));
+    }
+
+    /** @return iterable<string, array{?string, string, bool}> */
+    public static function tokenHeaders(): iterable
+    {
+        yield 'absent option' => [null, 'env-test-token', false];
+        yield 'empty option' => ['', 'env-test-token', false];
+        yield 'valid option' => ['X-Local-Key', 'option-test-token', false];
+        yield 'forbidden option' => ['Cookie', 'auth-test-token', true];
+        yield 'invalid option' => ['X_Key', 'auth-test-token', true];
+        yield 'Kelvin sign option' => ['X-Key', 'auth-test-token', true];
+    }
+
+    #[DataProvider('tokenHeaders')]
+    public function testTokenHeaderPrecedence(?string $option, string $credential, bool $warns): void
+    {
+        $log = tempnam(sys_get_temp_dir(), 'camada-token-');
+        self::assertIsString($log);
+        $prev = ini_set('error_log', $log);
+        try {
+            $h = $this->host(['CAMADA_TOKEN_HEADER' => 'X-Env-Key'], tokenHash: true, tokenHeader: $option);
+            $headers = [['x-env-key', 'env-test-token'], ['x-local-key', 'option-test-token'], ['authorization', 'Bearer auth-test-token']];
+            self::assertSame(200, $h(new Call(headers: $headers))->status);
+            [$row] = $this->events($h);
+            self::assertSame(Redact::hashToken($credential, 'tok-test'), $row['tk']);
+            self::assertSame($warns ? 1 : 0, substr_count((string) file_get_contents($log), 'invalid or forbidden token header name'));
+        } finally {
+            ini_set('error_log', $prev === false ? '' : $prev);
+            unlink($log);
+        }
+    }
+
+    public function testATokenHasherThrowLeavesTheAppAndBlockIntact(): void
+    {
+        $h = $this->host(tokenHash: true);
+        $hasher = new \ReflectionProperty(Camada::class, 'tokenHasher');
+        $hasher->setValue($h->engine, static fn (string $token): never => throw new \RuntimeException($token));
+        $headers = [['authorization', 'Bearer fake-token-0001-not-a-real-credential']];
+        $ok = $h(new Call(headers: $headers));
+        self::assertSame(200, $ok->status);
+        self::assertSame('hello', $ok->body);
+        $blocked = $h(new Call(headers: $headers, peer: FakeAnalyst::BLOCKED_IP));
+        self::assertSame(403, $blocked->status);
+        self::assertSame('Forbidden', $blocked->body);
+        $rows = $this->events($h);
+        self::assertSame([200, 403], array_column($rows, 'st'));
+        self::assertSame('ip4', $rows[1]['blk']);
+        foreach ($rows as $row) {
+            self::assertArrayNotHasKey('tk', $row);
+        }
     }
 
     public function testIgnoresASpoofedXffWithoutTrustedProxyConfig(): void
@@ -386,7 +473,8 @@ final class EngineTest extends TestCase
     public function testStripsSdkAttestedKeysFromTheBeaconBody(): void
     {
         $h = $this->host();
-        $forged = array_fill_keys(['tlsx', 'ja4', 'asn', 'cc', 'sid', 'ns', 'st', 'dur', 'rt', 'blk', 'rl', 'wrn', 'chs', 'ch', 'et', 'uid'], 'forged');
+        $forged = array_fill_keys(['tlsx', 'ja4', 'asn', 'cc', 'sid', 'ns', 'st', 'dur', 'rt', 'blk', 'rl', 'wrn', 'chs', 'ch', 'et', 'uid'], 'forged')
+            + ['tk' => str_repeat('a', 32), 'bf' => ['forged'], 'upf' => 1];
         $body = (string) json_encode($forged + ['rid' => 'r-1', 'tz' => 'UTC']);
         self::assertSame(204, $h(new Call('POST', '/_cam/fp', body: $body))->status);
         $rows = $this->events($h);

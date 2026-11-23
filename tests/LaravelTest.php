@@ -11,6 +11,7 @@ use Camada\Laravel\Middleware;
 use Camada\Runtime\Cache;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Http\UploadedFile;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -73,6 +74,72 @@ final class LaravelTest extends TestCase
     {
         $e->spool?->flush();
         return $this->a->allEvents();
+    }
+
+    public function testMultipartCapturesPostAndFileKeysBeforeTheAppMutatesThem(): void
+    {
+        $engine = $this->engine();
+        $mw = new Middleware($engine);
+        $progress = ini_get('session.upload_progress.name');
+        self::assertIsString($progress);
+        self::assertNotSame('', $progress);
+        $sentinel = 'private-form-value-test';
+        $fields = ['text' => $sentinel];
+        $files = ['upload' => new UploadedFile(__FILE__, 'private-file-name-test.txt', test: true)];
+        $server = ['CONTENT_TYPE' => 'Multipart/Form-Data; boundary=x'];
+        $baseline = self::request('GET', '/');
+        $mw->terminate($baseline, $mw->handle($baseline, static fn (): Response => new Response('app')));
+        $small = Request::create('/', 'POST', $fields + [$progress => $sentinel], [], $files, $server);
+        for ($i = 0; $i < 300; $i++) {
+            $fields["junk{$i}"] = $sentinel;
+        }
+        $fields[$progress] = $sentinel;
+        $large = Request::create('/', 'POST', $fields, [], $files, $server);
+        foreach ([$small, $large] as $req) {
+            $res = $mw->handle($req, static function (Request $r): Response {
+                $r->request->replace(['added-by-app' => 'local']);
+                $r->files->replace([]);
+                return new Response('app');
+            });
+            self::assertSame(200, $res->getStatusCode());
+            $mw->terminate($req, $res);
+        }
+        [$baseRow, $smallRow, $largeRow] = $this->events($engine);
+        self::assertSame(['text', $progress, 'upload'], $smallRow['bf']);
+        self::assertSame(['text', ...array_slice(array_keys($fields), 1, 31)], $largeRow['bf']);
+        foreach ([$smallRow, $largeRow] as $row) {
+            self::assertSame(200, $row['st']);
+            self::assertSame(1, $row['upf']);
+            $json = json_encode($row, JSON_THROW_ON_ERROR);
+            self::assertStringNotContainsString($sentinel, $json);
+            self::assertStringNotContainsString('private-file-name-test', $json);
+            self::assertSame([], array_diff(array_keys($row), array_keys($baseRow), ['bf', 'upf']));
+        }
+    }
+
+    public function testJsonAndEmptyBodiesShipNoFormFields(): void
+    {
+        $engine = $this->engine();
+        $mw = new Middleware($engine);
+        $empty = self::request('POST', '/', server: ['CONTENT_TYPE' => 'application/x-www-form-urlencoded'], content: '');
+        $json = Request::createFromBase(\Symfony\Component\HttpFoundation\Request::create(
+            '/',
+            'POST',
+            server: ['CONTENT_TYPE' => 'application/json'],
+            content: '{"PHP_SESSION_UPLOAD_PROGRESS":"private-form-value-test"}',
+        ));
+        self::assertSame(['PHP_SESSION_UPLOAD_PROGRESS'], $json->request->keys());
+        foreach ([$empty, $json] as $req) {
+            $res = $mw->handle($req, static fn (): Response => new Response('app'));
+            self::assertSame(200, $res->getStatusCode());
+            $mw->terminate($req, $res);
+        }
+        $rows = $this->events($engine);
+        self::assertSame([200, 200], array_column($rows, 'st'));
+        foreach ($rows as $row) {
+            self::assertArrayNotHasKey('bf', $row);
+            self::assertArrayNotHasKey('upf', $row);
+        }
     }
 
     public function testBlocksBeforeTheApp(): void

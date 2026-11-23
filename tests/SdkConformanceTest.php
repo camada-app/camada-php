@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace Camada\Tests;
 
+use Camada\Config;
 use Camada\Events\Builder;
 use Camada\Ip;
+use Camada\Redact;
 use Camada\Req;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -90,6 +92,40 @@ final class SdkConformanceTest extends TestCase
         $json = json_encode($ev, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_IGNORE);
         foreach ($absent as $secret) {
             self::assertStringNotContainsString($secret, $json);
+        }
+    }
+
+    /** @return iterable<string, array{string, ?string, array<string, string>, ?string, ?string}> */
+    public static function tokenCases(): iterable
+    {
+        $doc = Fixtures::json('redact/token.json');
+        self::assertSame(1, $doc['version']);
+        /** @var list<array{id: string, key: string, tokenHeader: ?string, headers: array<string, string>, credential: ?string, tk: ?string}> $cases */
+        $cases = $doc['cases'];
+        self::assertCount(22, $cases);
+        foreach ($cases as $c) {
+            yield $c['id'] => [$c['key'], $c['tokenHeader'], $c['headers'], $c['credential'], $c['tk']];
+        }
+    }
+
+    /** @param array<string, string> $headers */
+    #[DataProvider('tokenCases')]
+    public function testTokenRedaction(string $key, ?string $header, array $headers, ?string $credential, ?string $tk): void
+    {
+        $header = Config::normalizeTokenHeader($header);
+        $picked = $header === null ? null : Redact::tokenCredential($headers[$header] ?? null, false);
+        $picked ??= Redact::tokenCredential($headers['authorization'] ?? null, true);
+        self::assertSame($credential, $picked);
+        $pairs = [];
+        foreach ($headers as $name => $value) {
+            $pairs[] = [$name, $value];
+        }
+        $req = new Req('GET', '/', headers: $pairs);
+        $ev = Builder::wireEvent($req, null, 'sdk-php', 'r1', tokenHeader: $header, tokenHasher: static fn (string $token): string => Redact::hashToken($token, $key));
+        if ($tk === null) {
+            self::assertArrayNotHasKey('tk', $ev);
+        } else {
+            self::assertSame($tk, $ev['tk']);
         }
     }
 

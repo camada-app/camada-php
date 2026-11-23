@@ -7,6 +7,7 @@ namespace Camada\Laravel;
 use Camada\Answer;
 use Camada\Camada;
 use Camada\Context;
+use Camada\Events\Builder;
 use Camada\Guarded;
 use Camada\Http\Sapi;
 use Camada\Passed;
@@ -44,6 +45,8 @@ final class Middleware
         $eng = $this->engine();
         try {
             $req = Sapi::request($request->server->all());
+            $ct = $request->server->get('CONTENT_TYPE');
+            $form = is_string($ct) && Builder::formType($ct) !== null;
             $req = new \Camada\Req(
                 method: $request->getMethod(),
                 path: $request->getPathInfo(),
@@ -53,6 +56,8 @@ final class Middleware
                 peer: $request->server->get('REMOTE_ADDR'),
                 https: $request->isSecure(),
                 headers: $req->headers,
+                postKeys: $form ? $request->request->keys() : [],
+                fileKeys: $form ? $request->files->keys() : [],
             );
             $limit = $eng->wantsBody($req->method, $req->path);
             $body = $limit !== null ? self::body($request, $limit) : null;

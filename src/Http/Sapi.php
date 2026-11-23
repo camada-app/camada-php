@@ -7,6 +7,7 @@ namespace Camada\Http;
 use Camada\Answer;
 use Camada\Camada;
 use Camada\Context;
+use Camada\Events\Builder;
 use Camada\Guarded;
 use Camada\Passed;
 use Camada\Req;
@@ -145,6 +146,7 @@ final class Sapi
         }
         $proto = self::str($s['SERVER_PROTOCOL'] ?? null) ?? '';
         $https = self::str($s['HTTPS'] ?? null);
+        $form = $live && Builder::formType(self::str($s['CONTENT_TYPE'] ?? $s['HTTP_CONTENT_TYPE'] ?? null)) !== null;
         return new Req(
             method: self::str($s['REQUEST_METHOD'] ?? null) ?? 'GET',
             path: $path === '' ? '/' : $path,
@@ -154,6 +156,8 @@ final class Sapi
             peer: self::str($s['REMOTE_ADDR'] ?? null),
             https: $https !== null && $https !== '' && strtolower($https) !== 'off',
             headers: self::headers($s, $live),
+            postKeys: $form ? array_keys($_POST) : [],
+            fileKeys: $form ? array_keys($_FILES) : [],
         );
     }
 

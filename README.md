@@ -190,6 +190,35 @@ Env: `CAMADA_KEY` (or `CAMADA_TOKEN` + `CAMADA_SNAPSHOT_TOKEN`), `CAMADA_INGEST_
 `CAMADA_CACHE_DIR`, `CAMADA_CHALLENGE=0`, `CAMADA_UNIX_SOCKET_LISTENER=1`, and the kill switch `CAMADA_DISABLED=1` (checked per
 request; set at boot, no files are touched and no request is ever made).
 
+## Form fields and upload progress
+
+On URL-encoded and multipart form requests, the SDK captures top-level field names before your app
+runs. This is on by default. The `bf` field contains names only, with text fields before uploaded
+file fields. The SDK never adds form values or sizes. Names that look like credentials become `~r`.
+Each name is cut to 64 bytes, and bytes outside letters, digits, `_`, `.` and `-` become `~`.
+The SDK sends the first 32 distinct, nonempty names and omits `bf` for JSON or when no names remain.
+
+Multipart request rows also include `upf: 1` when a parsed text field name exactly matches PHP's
+`session.upload_progress.name` setting. The signal is on by default even when PHP's session
+upload progress tracking is disabled.
+
+## Credential hashes
+
+Credential hashing is off by default. Set `CAMADA_TOKEN_HASH=1` for `Camada::default()`, or opt in
+with `new Camada(tokenHash: true)`. In Laravel, pass it as
+`new Middleware(new Camada(tokenHash: true))`. An explicit `tokenHash: false` overrides the environment.
+
+The SDK tries the extra header named by `tokenHeader` or `CAMADA_TOKEN_HEADER` first, then
+`Authorization`. A nonempty option takes precedence over the environment. The name may contain up
+to 64 ASCII letters, digits or hyphens. The SDK ignores invalid names and reserves `Authorization`,
+`Cookie` and `Set-Cookie`. Apache with PHP-FPM needs `CGIPassAuth On` to expose `Authorization`.
+
+The SDK trims surrounding spaces and tabs and removes any leading `Authorization` scheme. A
+credential must contain at least 8 printable ASCII bytes. When a header supplies a credential,
+request rows include `tk`, a 32-character lowercase hex HMAC-SHA256 keyed by the ingest token.
+This includes blocked and challenged requests. The credential value never ships. Enable this
+only for random tokens or API keys. Keep it off for human passwords sent over Basic authentication.
+
 ## The first-party beacon
 
 ```php

@@ -12,6 +12,8 @@ namespace Camada;
  */
 final class Redact
 {
+    public const SCHEME_RE = "/\A[A-Za-z0-9!#$%&'*+.^_`|~-]{1,16}\z/";
+
     // Exact patterns of C6 v3, matched on decoded bytes (every pattern is ASCII, so a byte >= 0x80 never
     // matches). NAME_RE runs on ASCII-lowercased text (nameHit), so there is no case folding at all;
     // `\A`/`\z` are true string anchors (`$` would match before a trailing newline).
@@ -140,11 +142,54 @@ final class Redact
     }
 
     /**
+     * @param list<int|string> $post
+     * @param list<int|string> $files
+     * @return list<string>|null
+     */
+    public static function fieldNames(array $post, array $files): ?array
+    {
+        $out = $seen = [];
+        foreach ([$post, $files] as $keys) {
+            foreach ($keys as $key) {
+                $name = (string) $key;
+                $name = self::suspectValue($name) ? '~r' : substr($name, 0, 64);
+                $name = preg_replace('/[^A-Za-z0-9_.-]/', '~', $name);
+                if ($name === null || $name === '' || isset($seen[$name])) {
+                    continue;
+                }
+                $seen[$name] = true;
+                $out[] = $name;
+                if (count($out) === 32) {
+                    return $out;
+                }
+            }
+        }
+        return $out === [] ? null : $out;
+    }
+
+    /**
      * Stable per-tenant pseudonym: HMAC-SHA256 keyed by the ingest token, labelled so the hash
      * can never double as anything else, truncated to 32 hex chars. The raw identifier never leaves.
      */
     public static function hashUserId(string $userId, string $ingestToken): string
     {
         return substr(hash_hmac('sha256', 'uid:' . $userId, $ingestToken), 0, 32);
+    }
+
+    public static function tokenCredential(?string $value, bool $schemeSplit): ?string
+    {
+        $v = trim($value ?? '', " \t");
+        if ($schemeSplit) {
+            $sp = strpos($v, ' ');
+            if ($sp !== false && $sp > 0 && preg_match(self::SCHEME_RE, substr($v, 0, $sp)) === 1) {
+                $v = ltrim(substr($v, $sp + 1), " \t");
+            }
+        }
+        return preg_match('/\A[\x20-\x7e]{8,}\z/', $v) === 1 ? $v : null;
+    }
+
+    public static function hashToken(string $credential, string $ingestToken): string
+    {
+        return substr(hash_hmac('sha256', 'tok:' . $credential, $ingestToken), 0, 32);
     }
 }

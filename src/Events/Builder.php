@@ -21,10 +21,7 @@ final class Builder
         'via', 'x-forwarded-for', 'priority', 'sec-purpose', 'save-data', 'te', 'if-modified-since', 'if-none-match',
     ];
 
-    // A schemeless header (`Authorization: <raw token>`) has no safe prefix: the first "word" IS
-    // the credential. Only a real auth-scheme token followed by a space ever ships.
-    private const SCHEME_RE = "/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,16}$/";
-
+    // Only a real auth-scheme token followed by a space ever ships.
     public static function authScheme(?string $value): ?string
     {
         if ($value === null || $value === '') {
@@ -35,7 +32,18 @@ final class Builder
             return null;
         }
         $scheme = substr($value, 0, $sp);
-        return preg_match(self::SCHEME_RE, $scheme) === 1 ? $scheme : null;
+        return preg_match(Redact::SCHEME_RE, $scheme) === 1 ? $scheme : null;
+    }
+
+    /** @return 'urlencoded'|'multipart'|null */
+    public static function formType(?string $contentType): ?string
+    {
+        $mediaType = trim(explode(';', $contentType ?? '', 2)[0], " \t");
+        return match (strtr($mediaType, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')) {
+            'application/x-www-form-urlencoded' => 'urlencoded',
+            'multipart/form-data' => 'multipart',
+            default => null,
+        };
     }
 
     public static function nowMs(): int
@@ -46,10 +54,21 @@ final class Builder
     /**
      * The mutable wire event; the caller fills st/dur on response-finish before spooling it.
      *
+     * @param (\Closure(string): ?string)|null $tokenHasher
      * @return array<string, mixed>
      */
-    public static function wireEvent(Req $r, ?string $ip, string $tap, string $rid, ?string $sid = null, bool $newSession = false, ?string $ja4 = null): array
-    {
+    public static function wireEvent(
+        Req $r,
+        ?string $ip,
+        string $tap,
+        string $rid,
+        ?string $sid = null,
+        bool $newSession = false,
+        ?string $ja4 = null,
+        ?string $tokenHeader = null,
+        ?\Closure $tokenHasher = null,
+        string|false $progressName = false,
+    ): array {
         static $bits = null;
         if ($bits === null) {
             $bits = [];
@@ -75,7 +94,9 @@ final class Builder
                 $cookie = $cookie !== '' ? $cookie . '; ' . $value : $value;
             }
         }
-        $h = static fn (string $k): ?string => $first[$k] ?? null;
+        // An extra token header can overlap a header whose value usually ships in the row.
+        $privateHeader = $tokenHasher !== null ? $tokenHeader : null;
+        $h = static fn (string $k): ?string => $k === $privateHeader ? null : ($first[$k] ?? null);
         $query = $r->query;
         $qn = strlen($query) > 1 ? count(array_filter(explode('&', substr($query, 1)), static fn (string $p): bool => $p !== '')) : 0;
         $ev = [
@@ -93,6 +114,39 @@ final class Builder
         ];
         if ($ja4 !== null && $ja4 !== '') {
             $ev['ja4'] = $ja4;
+        }
+        if ($tokenHasher !== null) {
+            try {
+                $credential = $tokenHeader === null ? null : Redact::tokenCredential($first[$tokenHeader] ?? null, false);
+                $credential ??= Redact::tokenCredential($first['authorization'] ?? null, true);
+                if ($credential !== null) {
+                    $tk = $tokenHasher($credential);
+                    if ($tk !== null && $tk !== '') {
+                        $ev['tk'] = $tk;
+                    }
+                }
+            } catch (\Throwable) {
+                // A hashing failure must leave enforcement intact and may contain the credential.
+            }
+        }
+        try {
+            $form = $r->postKeys === [] && $r->fileKeys === [] ? null : self::formType($first['content-type'] ?? null);
+            if ($form === 'multipart' && $progressName !== false && $progressName !== '') {
+                foreach ($r->postKeys as $key) {
+                    if ((string) $key === $progressName) {
+                        $ev['upf'] = 1;
+                        break;
+                    }
+                }
+            }
+            if ($form !== null) {
+                $fields = Redact::fieldNames($r->postKeys, $r->fileKeys);
+                if ($fields !== null) {
+                    $ev['bf'] = $fields;
+                }
+            }
+        } catch (\Throwable) {
+            // Optional form metadata must not interrupt enforcement.
         }
         $ev['st'] = null;
         $ev['dur'] = null;   // 'dur': the collector wire already claims 'lat' for latitude
