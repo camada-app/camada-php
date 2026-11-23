@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Camada\Tests;
 
 use Camada\Events\Builder;
+use Camada\Events\RowOptions;
+use Camada\Redact;
 use Camada\Req;
 use PHPUnit\Framework\TestCase;
 
@@ -28,6 +30,49 @@ final class BuildTest extends TestCase
         self::assertNull(Builder::authScheme(' Bearer x'));
         self::assertNull(Builder::authScheme(str_repeat('a', 17) . ' x'));
         self::assertNull(Builder::authScheme(null));
+    }
+
+    public function testTokenHashUsesTheFirstExposedHeaderValue(): void
+    {
+        $req = self::req([
+            ['x-api-key', 'short'], ['x-api-key', 'another-api-key'],
+            ['authorization', 'Bearer first-token'], ['authorization', 'Bearer second-token'],
+        ]);
+        $options = new RowOptions('x-api-key', static fn (string $token): string => Redact::hashToken($token, 'test-key'));
+        $ev = Builder::wireEvent($req, null, 'sdk-php', 'r1', options: $options);
+        self::assertSame(Redact::hashToken('first-token', 'test-key'), $ev['tk']);
+    }
+
+    public function testThrowingTokenHasherStillBuildsTheRowWithFormFields(): void
+    {
+        $req = new Req('POST', '/', headers: [
+            ['authorization', 'Bearer first-token'], ['content-type', 'multipart/form-data; boundary=x'],
+        ], post: ['progress' => 'demo'], files: ['file' => []]);
+        $options = new RowOptions(tokenHasher: static fn (string $token): never => throw new \RuntimeException($token), progressName: 'progress');
+        $ev = Builder::wireEvent($req, null, 'sdk-php', 'r1', options: $options);
+        self::assertArrayNotHasKey('tk', $ev);
+        self::assertSame(['progress', 'file'], $ev['bf']);
+        self::assertSame(1, $ev['upf']);
+    }
+
+    public function testFormFieldNamesAreSanitizedAsBytesThenDeduplicated(): void
+    {
+        self::assertSame(['0', '~r', 'raw~~~', 'text', 'file'], Redact::fieldNames(
+            array_fill_keys(['', 0, str_repeat('a', 40), "raw\xc3\xa9\xff", 'raw!!!', 'text'], null),
+            ['text' => [], 'file' => []],
+        ));
+        self::assertNull(Redact::fieldNames(['' => null], []));
+    }
+
+    public function testUploadProgressMatchesOnlyTheExactRawPostKey(): void
+    {
+        $req = new Req('POST', '/', headers: [['content-type', 'multipart/form-data']], post: ['Progress' => 'demo', 'up_x' => 'demo', 0 => null], files: ['progress' => []]);
+        foreach (['progress', 'up.x', '', false] as $name) {
+            self::assertArrayNotHasKey('upf', Builder::wireEvent($req, null, 'sdk-php', 'r1', options: new RowOptions(progressName: $name)));
+        }
+        $ev = Builder::wireEvent($req, null, 'sdk-php', 'r1', options: new RowOptions(progressName: '0'));
+        self::assertSame(1, $ev['upf']);
+        self::assertSame(['Progress', 'up_x', '0', 'progress'], $ev['bf']);
     }
 
     public function testRefererShipsWithItsCredentialsScrubbed(): void

@@ -8,6 +8,7 @@ use Camada\Challenge\Format;
 use Camada\Challenge\Kit;
 use Camada\Challenge\Page;
 use Camada\Events\Builder;
+use Camada\Events\RowOptions;
 use Camada\Events\Spool;
 use Camada\Runtime\Cache;
 use Camada\Runtime\Deferred;
@@ -46,6 +47,7 @@ class Camada
     public readonly bool $unixSocketListener;
     private readonly bool $killed;
     private readonly Deferred $deferred;
+    protected RowOptions $rowOptions;
 
     /**
      * @param array<string, mixed>|null $env where CAMADA_* are read from (default: the process environment)
@@ -68,6 +70,8 @@ class Camada
         public readonly string $challengePath = Constants::CHALLENGE_PATH,
         int $snapshotVersion = Constants::DEFAULT_SNAPSHOT_VERSION,
         bool $unixSocketListener = false,
+        ?bool $tokenHash = null,
+        ?string $tokenHeader = null,
     ) {
         $source = $env ?? array_merge($_ENV, getenv());
         $this->challengeOn = $challenge && ($source['CAMADA_CHALLENGE'] ?? null) !== '0';
@@ -82,7 +86,18 @@ class Camada
             return;
         }
         $cache = new Cache(Cache::defaultDir($this->env->snapToken, $this->env->cacheDir));
-        Guarded::useStamp($cache->path('log.stamp'));   // one log line a minute across every worker, not per process
+        Guarded::useStamp($cache->path('log.stamp'), $cache->path('warn.stamp'));
+        $envHeader = $source['CAMADA_TOKEN_HEADER'] ?? null;
+        [$header, $invalidHeader] = Config::resolveTokenHeader($tokenHeader, is_string($envHeader) ? $envHeader : null);
+        if ($invalidHeader) {
+            Guarded::warn('invalid or forbidden token header name');
+        }
+        $tokenHasher = null;
+        if (Config::tokenHashEnabled($tokenHash, $source['CAMADA_TOKEN_HASH'] ?? null)) {
+            $ingestToken = $this->env->ingestToken;
+            $tokenHasher = static fn (string $credential): string => Redact::hashToken($credential, $ingestToken);
+        }
+        $this->rowOptions = new RowOptions($header, $tokenHasher, ini_get('session.upload_progress.name'));
         $transport ??= new StreamTransport();
         $this->snap = new Client($this->env->snapshotUrl, $this->env->snapToken, $cache, $transport, sdk: Version::SDK_ID, snapshotVersion: $snapshotVersion, refreshS: $refreshS);
         $this->spool = new Spool($cache, $transport, $this->env->ingestUrl, $this->env->ingestToken, sdk: Version::SDK_ID);
@@ -330,7 +345,7 @@ class Camada
     /** @return array<string, mixed> */
     private function event(Req $req, string $rid, ?string $sid, bool $newSession, ?string $ip): array
     {
-        return Builder::wireEvent($req, $ip, Constants::TAP, $rid, $sid, $newSession);
+        return Builder::wireEvent($req, $ip, Constants::TAP, $rid, $sid, $newSession, options: $this->rowOptions);
     }
 
     // ---- beacon ----

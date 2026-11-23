@@ -7,6 +7,7 @@ namespace Camada\Laravel;
 use Camada\Answer;
 use Camada\Camada;
 use Camada\Context;
+use Camada\Events\Builder;
 use Camada\Guarded;
 use Camada\Http\Sapi;
 use Camada\Passed;
@@ -43,7 +44,10 @@ final class Middleware
     {
         $eng = $this->engine();
         try {
-            $req = Sapi::request($request->server->all());
+            $ct = $request->headers->get('content-type');
+            $req = Sapi::request(array_replace($request->server->all(), ['CONTENT_TYPE' => $ct, 'HTTP_CONTENT_TYPE' => $ct]));
+            // Laravel can populate the request bag with decoded JSON.
+            $form = !$request->isJson() && Builder::formType($ct) !== null;
             $req = new \Camada\Req(
                 method: $request->getMethod(),
                 path: $request->getPathInfo(),
@@ -53,6 +57,8 @@ final class Middleware
                 peer: $request->server->get('REMOTE_ADDR'),
                 https: $request->isSecure(),
                 headers: $req->headers,
+                post: $form ? $request->request->all() : [],
+                files: $form ? $request->files->all() : [],
             );
             $limit = $eng->wantsBody($req->method, $req->path);
             $body = $limit !== null ? self::body($request, $limit) : null;

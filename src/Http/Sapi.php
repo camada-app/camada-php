@@ -154,6 +154,8 @@ final class Sapi
             peer: self::str($s['REMOTE_ADDR'] ?? null),
             https: $https !== null && $https !== '' && strtolower($https) !== 'off',
             headers: self::headers($s, $live),
+            post: $live ? $_POST : [],
+            files: $live ? $_FILES : [],
         );
     }
 

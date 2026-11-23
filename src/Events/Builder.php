@@ -21,21 +21,20 @@ final class Builder
         'via', 'x-forwarded-for', 'priority', 'sec-purpose', 'save-data', 'te', 'if-modified-since', 'if-none-match',
     ];
 
-    // A schemeless header (`Authorization: <raw token>`) has no safe prefix: the first "word" IS
-    // the credential. Only a real auth-scheme token followed by a space ever ships.
-    private const SCHEME_RE = "/^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,16}$/";
-
     public static function authScheme(?string $value): ?string
     {
-        if ($value === null || $value === '') {
-            return null;
-        }
-        $sp = strpos($value, ' ');
-        if ($sp === false || $sp === 0) {
-            return null;
-        }
-        $scheme = substr($value, 0, $sp);
-        return preg_match(self::SCHEME_RE, $scheme) === 1 ? $scheme : null;
+        return Redact::authScheme($value);
+    }
+
+    /** @return 'urlencoded'|'multipart'|null */
+    public static function formType(?string $contentType): ?string
+    {
+        $mediaType = trim(explode(';', $contentType ?? '', 2)[0], " \t");
+        return match (Redact::asciiLower($mediaType)) {
+            'application/x-www-form-urlencoded' => 'urlencoded',
+            'multipart/form-data' => 'multipart',
+            default => null,
+        };
     }
 
     public static function nowMs(): int
@@ -48,8 +47,16 @@ final class Builder
      *
      * @return array<string, mixed>
      */
-    public static function wireEvent(Req $r, ?string $ip, string $tap, string $rid, ?string $sid = null, bool $newSession = false, ?string $ja4 = null): array
-    {
+    public static function wireEvent(
+        Req $r,
+        ?string $ip,
+        string $tap,
+        string $rid,
+        ?string $sid = null,
+        bool $newSession = false,
+        ?string $ja4 = null,
+        ?RowOptions $options = null,
+    ): array {
         static $bits = null;
         if ($bits === null) {
             $bits = [];
@@ -93,6 +100,33 @@ final class Builder
         ];
         if ($ja4 !== null && $ja4 !== '') {
             $ev['ja4'] = $ja4;
+        }
+        if (($tokenHasher = $options?->tokenHasher) !== null) {
+            try {
+                $credential = Redact::selectCredential($first, $options->tokenHeader);
+                if ($credential !== null) {
+                    $tk = $tokenHasher($credential);
+                    if ($tk !== null && $tk !== '') {
+                        $ev['tk'] = $tk;
+                    }
+                }
+            } catch (\Throwable) {
+                // A hashing failure must leave enforcement intact and may contain the credential.
+            }
+        }
+        try {
+            if (($r->post !== [] || $r->files !== []) && ($form = self::formType($h('content-type'))) !== null) {
+                $progressName = $options->progressName ?? false;
+                if ($form === 'multipart' && $progressName !== false && $progressName !== '' && array_key_exists($progressName, $r->post)) {
+                    $ev['upf'] = 1;
+                }
+                $fields = Redact::fieldNames($r->post, $r->files);
+                if ($fields !== null) {
+                    $ev['bf'] = $fields;
+                }
+            }
+        } catch (\Throwable) {
+            // Optional form metadata must not interrupt enforcement.
         }
         $ev['st'] = null;
         $ev['dur'] = null;   // 'dur': the collector wire already claims 'lat' for latitude

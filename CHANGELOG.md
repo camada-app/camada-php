@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Request rows include redacted form field names (`bf`) and a multipart upload progress field signal (`upf`) by default. (camada-all-y3pl)
+- Opt in to keyed credential hashes (`tk`) with `tokenHash: true` or `CAMADA_TOKEN_HASH=1`. The beacon relay strips all three fields from visitor payloads. (camada-all-29aa)
+
 ## 0.2.0 - 2026-10-26
 
 - fix (security): snapshot meta `pathsRegex` entries are now tested like a path `matches` rule condition, and inside the request's regex budget shared with the rule walk. They are case-insensitive, a pattern this SDK refuses never matches, and a path over 2048 chars, an engine failure or a spent budget answers block. Previously they ran outside the budget, and a failure was a miss. `Snapshot::$pathsRegex` is now a list of closures. (camada-all-rvuh)

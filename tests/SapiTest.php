@@ -8,6 +8,7 @@ use Camada\Challenge\Page;
 use Camada\Context;
 use Camada\Runtime\Cache;
 use Camada\Snapshot\Client;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -20,6 +21,8 @@ use PHPUnit\Framework\TestCase;
 final class SapiTest extends TestCase
 {
     private const HTML = ['accept' => 'text/html,*/*', 'sec-fetch-dest' => 'document'];
+    private const MULTIPART = ['content-type' => 'multipart/form-data; boundary=camada-test'];
+    private const FORM_SENTINEL = 'private-form-value-test';
     private string $dir;
     private ?PhpServer $app = null;
     private ?PhpServer $analyst = null;
@@ -79,6 +82,95 @@ final class SapiTest extends TestCase
             usleep(20_000);
         } while (microtime(true) < $deadline);
         self::fail("expected {$expect} spooled rows, found " . count($rows));
+    }
+
+    /** @param array<int|string, string> $fields */
+    private static function multipart(array $fields): string
+    {
+        $body = '';
+        foreach ($fields as $name => $value) {
+            $body .= "--camada-test\r\nContent-Disposition: form-data; name=\"{$name}\"\r\n\r\n{$value}\r\n";
+        }
+        return $body . "--camada-test\r\nContent-Disposition: form-data; name=\"upload\"; filename=\"private-file-name-test.txt\"\r\n"
+            . "Content-Type: text/plain\r\n\r\nprivate-file-content-test\r\n--camada-test--\r\n";
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function progressNames(): iterable
+    {
+        yield 'default' => ['PHP_SESSION_UPLOAD_PROGRESS'];
+        yield 'renamed' => ['up_x'];
+    }
+
+    #[DataProvider('progressNames')]
+    public function testMultipartCapturesNamesAndLateUploadProgress(string $name): void
+    {
+        $app = $this->boot(ini: ['session.upload_progress.name' => $name, 'session.upload_progress.enabled' => '0']);
+        self::assertSame(200, $app->request('GET', '/')['status']);
+        $fields = ['display name' => self::FORM_SENTINEL];
+        self::assertSame(200, $app->request('POST', '/', self::MULTIPART, self::multipart($fields + [$name => self::FORM_SENTINEL]))['status']);
+        for ($i = 0; $i < 300; $i++) {
+            $fields["junk{$i}"] = self::FORM_SENTINEL;
+        }
+        $fields[$name] = self::FORM_SENTINEL;
+        self::assertSame(200, $app->request('POST', '/', self::MULTIPART, self::multipart($fields))['status']);
+        [$baseline, $small, $large] = $this->spool(3);
+        self::assertSame(['display_name', $name, 'upload'], $small['bf']);
+        self::assertSame(['display_name', ...array_slice(array_keys($fields), 1, 31)], $large['bf']);
+        foreach ([$small, $large] as $row) {
+            self::assertSame(200, $row['st']);
+            self::assertSame(1, $row['upf']);
+            $json = json_encode($row, JSON_THROW_ON_ERROR);
+            foreach ([self::FORM_SENTINEL, 'private-file-name-test', 'private-file-content-test'] as $sentinel) {
+                self::assertStringNotContainsString($sentinel, $json);
+            }
+            self::assertSame([], array_diff(array_keys($row), array_keys($baseline), ['bf', 'upf']));
+        }
+    }
+
+    public function testFormFieldCapsAndNumericNamesOverHttp(): void
+    {
+        $app = $this->boot();
+        $fields = [0 => self::FORM_SENTINEL, "raw\xc3\xa9\xff" => self::FORM_SENTINEL];
+        for ($i = 0; $i < 300; $i++) {
+            $fields[sprintf('f%03d!', $i) . str_repeat('x', 200)] = self::FORM_SENTINEL;
+        }
+        $r = $app->request('POST', '/', ['content-type' => 'application/x-www-form-urlencoded'], http_build_query($fields));
+        self::assertSame(200, $r['status']);
+        [$row] = $this->spool(1);
+        self::assertArrayNotHasKey('upf', $row);
+        $names = $row['bf'];
+        self::assertIsArray($names);
+        self::assertCount(32, $names);
+        self::assertSame(['0', 'raw~~~', 'f000~' . str_repeat('x', 59)], array_slice($names, 0, 3));
+        foreach ($names as $name) {
+            self::assertIsString($name);
+            self::assertLessThanOrEqual(64, strlen($name));
+            self::assertMatchesRegularExpression('/\A[A-Za-z0-9_.~-]{1,64}\z/', $name);
+        }
+    }
+
+    public function testJsonEmptyAndOversizedBodiesShipNoFormFields(): void
+    {
+        // The CLI server can print its own startup warning before the SDK runs.
+        $app = $this->boot(ini: ['post_max_size' => '1K', 'display_errors' => '0']);
+        $requests = [
+            [['content-type' => 'application/json'], '{"PHP_SESSION_UPLOAD_PROGRESS":"private-form-value-test","text":"private-form-value-test"}'],
+            [['content-type' => 'application/x-www-form-urlencoded'], ''],
+            [self::MULTIPART, self::multipart(['PHP_SESSION_UPLOAD_PROGRESS' => str_repeat('x', 4096)])],
+        ];
+        foreach ($requests as [$headers, $body]) {
+            $r = $app->request('POST', '/', $headers, $body);
+            self::assertSame(200, $r['status']);
+            self::assertStringStartsWith('hello ', $r['body']);
+        }
+        $rows = $this->spool(3);
+        self::assertSame([200, 200, 200], array_column($rows, 'st'));
+        foreach ($rows as $row) {
+            self::assertArrayNotHasKey('bf', $row);
+            self::assertArrayNotHasKey('upf', $row);
+        }
+        self::assertStringNotContainsString('[camada] suppressed error', $app->output());
     }
 
     public function testBlocksBeforeTheAppWithTheContractHeaders(): void

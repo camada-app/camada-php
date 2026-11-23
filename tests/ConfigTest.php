@@ -31,6 +31,27 @@ final class ConfigTest extends TestCase
         self::assertNull(Config::remoteConfig(null));
     }
 
+    public function testTokenHashRequiresAnExplicitOptIn(): void
+    {
+        self::assertFalse(Config::tokenHashEnabled(null, null));
+        self::assertFalse(Config::tokenHashEnabled(false, '1'));
+        self::assertFalse(Config::tokenHashEnabled(null, 'true'));
+        self::assertFalse(Config::tokenHashEnabled(null, ' 1'));
+        self::assertFalse(Config::tokenHashEnabled(null, 1));
+        self::assertTrue(Config::tokenHashEnabled(null, '1'));
+        self::assertTrue(Config::tokenHashEnabled(true, '0'));
+    }
+
+    public function testTokenHeaderUsesOnlyAsciiAndRejectsReservedNames(): void
+    {
+        self::assertSame(['x-api-key', false], Config::resolveTokenHeader('X-API-Key', 'X-Env-Key'));
+        self::assertSame(['x-env-key', false], Config::resolveTokenHeader('', 'X-Env-Key'));
+        self::assertSame([null, false], Config::resolveTokenHeader(null, ''));
+        foreach (['Authorization', 'COOKIE', 'Set-Cookie', "x-key\n", 'X-Key', str_repeat('x', 65)] as $invalid) {
+            self::assertSame([null, true], Config::resolveTokenHeader($invalid, 'X-Env-Key'), $invalid);
+        }
+    }
+
     public function testEnvResolvesTheKeyAndTheDefaults(): void
     {
         $e = Env::resolve(['CAMADA_KEY' => 'tok.snap']);

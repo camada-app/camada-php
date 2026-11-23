@@ -12,6 +12,8 @@ namespace Camada;
  */
 final class Redact
 {
+    public const SCHEME_RE = "/\A[A-Za-z0-9!#$%&'*+.^_`|~-]{1,16}\z/";
+
     // Exact patterns of C6 v3, matched on decoded bytes (every pattern is ASCII, so a byte >= 0x80 never
     // matches). NAME_RE runs on ASCII-lowercased text (nameHit), so there is no case folding at all;
     // `\A`/`\z` are true string anchors (`$` would match before a trailing newline).
@@ -70,10 +72,14 @@ final class Redact
         return preg_match(self::ESC_RE, $s) === 1 ? null : $s;
     }
 
-    /** Lowercase A-Z only, then a substring test: ASCII-only case folding by construction. */
+    public static function asciiLower(string $value): string
+    {
+        return strtr($value, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz');
+    }
+
     private static function nameHit(string $n): bool
     {
-        return preg_match(self::NAME_RE, strtr($n, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')) === 1;
+        return preg_match(self::NAME_RE, self::asciiLower($n)) === 1;
     }
 
     /** A decoded value carrying `?`, `&` or `=` is a credential when one of its `[?&]` segments is (no further decoding). */
@@ -140,11 +146,77 @@ final class Redact
     }
 
     /**
+     * @param array<int|string, mixed> $post
+     * @param array<int|string, mixed> $files
+     * @return list<string>|null
+     */
+    public static function fieldNames(array $post, array $files): ?array
+    {
+        $out = $seen = [];
+        foreach ([$post, $files] as $fields) {
+            foreach ($fields as $key => $_) {
+                $name = (string) $key;
+                $name = self::suspectValue($name) ? '~r' : substr($name, 0, 64);
+                $name = preg_replace('/[^A-Za-z0-9_.-]/', '~', $name);
+                if ($name === null || $name === '' || isset($seen[$name])) {
+                    continue;
+                }
+                $seen[$name] = true;
+                $out[] = $name;
+                if (count($out) === 32) {
+                    return $out;
+                }
+            }
+        }
+        return $out === [] ? null : $out;
+    }
+
+    /**
      * Stable per-tenant pseudonym: HMAC-SHA256 keyed by the ingest token, labelled so the hash
      * can never double as anything else, truncated to 32 hex chars. The raw identifier never leaves.
      */
     public static function hashUserId(string $userId, string $ingestToken): string
     {
-        return substr(hash_hmac('sha256', 'uid:' . $userId, $ingestToken), 0, 32);
+        return self::hashLabelled('uid:', $userId, $ingestToken);
+    }
+
+    // Only a real auth-scheme token followed by a space ever ships.
+    public static function authScheme(?string $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        $sp = strpos($value, ' ');
+        if ($sp === false || $sp === 0) {
+            return null;
+        }
+        $scheme = substr($value, 0, $sp);
+        return preg_match(self::SCHEME_RE, $scheme) === 1 ? $scheme : null;
+    }
+
+    public static function tokenCredential(?string $value, bool $schemeSplit): ?string
+    {
+        $v = trim($value ?? '', " \t");
+        if ($schemeSplit && ($scheme = self::authScheme($v)) !== null) {
+            $v = ltrim(substr($v, strlen($scheme) + 1), " \t");
+        }
+        return preg_match('/\A[\x20-\x7e]{8,}\z/', $v) === 1 ? $v : null;
+    }
+
+    /** @param array<int|string, string> $first */
+    public static function selectCredential(array $first, ?string $tokenHeader): ?string
+    {
+        $extra = $tokenHeader === null ? null : self::tokenCredential($first[$tokenHeader] ?? null, false);
+        return $extra ?? self::tokenCredential($first['authorization'] ?? null, true);
+    }
+
+    public static function hashToken(string $credential, string $ingestToken): string
+    {
+        return self::hashLabelled('tok:', $credential, $ingestToken);
+    }
+
+    private static function hashLabelled(string $label, string $value, string $key): string
+    {
+        return substr(hash_hmac('sha256', $label . $value, $key), 0, 32);
     }
 }
