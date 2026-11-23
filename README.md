@@ -200,6 +200,12 @@ The tag is `<script src="/_cam/b.js?r=<rid>" async>`, so the beacon joins the pa
 served it. Move both paths with `scriptPath` / `fpPath` when `/_cam/` is not yours; the script
 derives the post path from its own URL, so the two must share a directory.
 
+The SDK vendors a tagged `@camada/browser` release, never a build of camada-browser main. CI reads
+the version from `BeaconJs::VERSION` in `src/BeaconJs.php`, checks out `camada-browser` at
+`v<version>`, builds it and compares it byte for byte with the vendored copy, so beacon changes on
+main cannot turn this CI red. To take a new beacon, re-sync from its release tag (see the testing
+notes below) and commit; the version bump moves CI to the new tag.
+
 ## App-context events
 
 ```php
@@ -271,9 +277,9 @@ composer install && composer lint && composer fmt && composer test
 The suite reads the golden snapshot fixtures from the `camada-core` sibling checkout (or
 `CAMADA_FIXTURES_DIR`) and runs every case over both word sources (the seeking one a request
 uses and the in-memory one), which is what proves the seeking matcher equals the reference. It
-pins the vendored beacon to `camada-browser/dist/auto.global.js` (`npm run build` there first,
-then `php scripts/sync-beacon.php` after a beacon release). Both fail by name when the checkout
-is missing rather than skipping. The SAPI suite drives the adapter over a real `php -S`.
+pins the vendored beacon to `camada-browser/dist/auto.global.js` (check out the release tag,
+run `npm run build` there, then `php scripts/sync-beacon.php`). Both fail by name when the
+checkout is missing rather than skipping. The SAPI suite drives the adapter over a real `php -S`.
 
 [`camada-php-example`](https://github.com/camada-app/camada-php-example) is the hand-test bench (`php -S` on :3005), and
 `node scripts/e2e-sdk-php.mjs` in `camada/edge-analyst` drives it against a seeded local analyst
