@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-11-24
 
 - Request rows include redacted form field names (`bf`) and a multipart upload progress field signal (`upf`) by default. (camada-all-y3pl)
 - Opt in to keyed credential hashes (`tk`) with `tokenHash: true` or `CAMADA_TOKEN_HASH=1`. The beacon relay strips all three fields from visitor payloads. (camada-all-29aa)
+- chore: beacon re-synced to `@camada/browser` 0.5.0.
 
 ## 0.2.0 - 2026-10-26
 
