@@ -48,7 +48,9 @@ final class BuildTest extends TestCase
         $req = new Req('POST', '/', headers: [
             ['authorization', 'Bearer first-token'], ['content-type', 'multipart/form-data; boundary=x'],
         ], post: ['progress' => 'demo'], files: ['file' => []]);
-        $options = new RowOptions(tokenHasher: static fn (string $token): never => throw new \RuntimeException($token), progressName: 'progress');
+        $options = new RowOptions(tokenHasher: static function (string $token): never {
+            throw new \RuntimeException($token);
+        }, progressName: 'progress');
         $ev = Builder::wireEvent($req, null, 'sdk-php', 'r1', options: $options);
         self::assertArrayNotHasKey('tk', $ev);
         self::assertSame(['progress', 'file'], $ev['bf']);

@@ -199,7 +199,9 @@ final class EngineTest extends TestCase
     {
         $h = $this->host(tokenHash: true);
         $options = new \ReflectionProperty(Camada::class, 'rowOptions');
-        $options->setValue($h->engine, new RowOptions(tokenHasher: static fn (string $token): never => throw new \RuntimeException($token)));
+        $options->setValue($h->engine, new RowOptions(tokenHasher: static function (string $token): never {
+            throw new \RuntimeException($token);
+        }));
         $headers = [['authorization', 'Bearer fake-token-0001-not-a-real-credential']];
         $ok = $h(new Call(headers: $headers));
         self::assertSame(200, $ok->status);
