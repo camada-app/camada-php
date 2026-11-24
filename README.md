@@ -311,6 +311,12 @@ pins the vendored beacon to `camada-browser/dist/auto.global.js` (check out the 
 run `npm run build` there, then `php scripts/sync-beacon.php`). Both fail by name when the
 checkout is missing rather than skipping. The SAPI suite drives the adapter over a real `php -S`.
 
+CI checks out the `camada-core` commit pinned by `ref:` in `.github/workflows/ci.yml`, so fixture
+changes on `camada-core` main won't affect CI. Local runs still pick up changes in the sibling
+checkout, which usually follows `main`. When this SDK needs new or changed fixtures, push the
+`camada-core` commit with those fixtures to `main` first, then set `ref:` to its full SHA in
+the same commit as the SDK changes.
+
 [`camada-php-example`](https://github.com/camada-app/camada-php-example) is the hand-test bench (`php -S` on :3005), and
 `node scripts/e2e-sdk-php.mjs` in `camada/edge-analyst` drives it against a seeded local analyst
 over real HTTP, cold first request included.
